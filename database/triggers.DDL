@@ -3,21 +3,30 @@ DELIMITER $$
 -- =========================================================================
 -- Trigger 1: 寫入明細前 (防禦鎖定竄改 & 強制覆寫歷史單價)
 -- =========================================================================
+
 CREATE TRIGGER trg_td_before_insert
 BEFORE INSERT ON Treatment_Details
 FOR EACH ROW
 BEGIN
     DECLARE v_is_locked BOOLEAN;
     DECLARE v_current_price DECIMAL(10,2);
-    
-    -- 檢查病歷鎖定狀態
-    SELECT Record_Locked INTO v_is_locked FROM Medical_Records WHERE Record_ID = NEW.Record_ID;
+
+    -- 1. 檢查病歷鎖定狀態 (防護機制)
+    SELECT Record_Locked INTO v_is_locked 
+    FROM Medical_Records 
+    WHERE Record_ID = NEW.Record_ID;
+
+    -- 若病歷已鎖定，立刻拋出錯誤並終止 INSERT 操作
     IF v_is_locked = TRUE THEN
-        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Transaction Rejected: Medical Record is locked.';
+        SIGNAL SQLSTATE '45000' 
+        SET MESSAGE_TEXT = 'Transaction Rejected: Medical Record is locked.';
     END IF;
+
+    -- 2. 若病歷未鎖定，則無視前端傳入的 Historical_Price，強制從 Catalog 撈取當下價格覆寫
+    SELECT Current_Price INTO v_current_price 
+    FROM Catalog_Items 
+    WHERE Item_ID = NEW.Item_ID;
     
-    -- 無視前端傳入的 Historical_Price，強制從 Catalog 撈取當下價格覆寫
-    SELECT Current_Price INTO v_current_price FROM Catalog_Items WHERE Item_ID = NEW.Item_ID;
     SET NEW.Historical_Price = v_current_price;
 END$$
 
