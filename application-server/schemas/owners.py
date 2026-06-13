@@ -13,7 +13,7 @@ class OwnerCreate(BaseModel):
 
 
 class OwnerUpdate(BaseModel):
-    Full_Name: str
+    Full_Name: Optional[str] = None
     Phone_Number: Optional[str] = None
     Email_Address: Optional[str] = None
     Physical_Address: Optional[str] = None

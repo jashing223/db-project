@@ -14,6 +14,14 @@ class PetCreate(BaseModel):
     Current_Weight: Optional[float] = None
 
 
+class PetUpdate(BaseModel):
+    Pet_Name: Optional[str] = None
+    Species_Type: Optional[str] = None
+    Breed_Name: Optional[str] = None
+    Birth_Date: Optional[str] = None
+    Current_Weight: Optional[float] = None
+
+
 class PetOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

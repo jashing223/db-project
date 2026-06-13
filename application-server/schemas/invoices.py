@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict
 
 
 class InvoicePay(BaseModel):
-    Payment_Method: str
-    note: Optional[str] = None
+    Payment_Method: Literal["cash", "card", "insurance"]
 
 
 class InvoiceOut(BaseModel):
@@ -22,6 +21,5 @@ class InvoiceOut(BaseModel):
 
 class InvoicePending(InvoiceOut):
     record: Optional[dict] = None
-    appt: Optional[dict] = None
     pet: Optional[dict] = None
     owner: Optional[dict] = None
