@@ -102,7 +102,7 @@ Serve the HTML pages from any static file server or open them locally; CORS is e
 | POST | `/records/{id}/details` | Add treatment detail |
 | DELETE | `/records/{id}/details/{detail_id}` | Remove treatment detail |
 | PATCH | `/records/{id}/draft` | Save clinical notes / diagnosis draft |
-| PATCH | `/records/{id}/lock` | Lock record, deduct stock, mark appointment done |
+| PATCH | `/records/{id}/lock` | Lock record (trigger deducts stock), mark appointment done |
 | GET | `/invoices/pending` | Unpaid invoices for locked records |
 | PATCH | `/invoices/{id}/pay` | Mark invoice paid |
 
@@ -159,6 +159,7 @@ Rules enforced by the **database triggers** (not duplicated in Python):
 | Block detail changes on locked records | `trg_td_before_*` |
 | `Total_Billed` updated on detail insert/update/delete | `trg_td_after_*` |
 | Drug stock deducted when record locked | `trg_mr_after_update` |
+| Drug stock sufficiency before add detail / lock | `verify_drug_stock_for_*` in `helpers.py` |
 
 Rules handled in **application code**:
 
