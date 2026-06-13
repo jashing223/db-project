@@ -15,6 +15,10 @@ BUSY_SLOTS: dict[int, list[str]] = {
     3: ["13:00"],
 }
 
+APPOINTMENT_PET_FIELDS = ("Pet_ID", "Pet_Name", "Species_Type", "Birth_Date", "Current_Weight")
+INVOICE_PET_FIELDS = ("Pet_ID", "Pet_Name", "Species_Type")
+OWNER_FIELDS = ("Owner_ID", "Full_Name")
+DOCTOR_FIELDS = ("Staff_ID", "Staff_Name", "Specialty")
 
 APPOINTMENT_SELECT = """
     SELECT
@@ -48,6 +52,10 @@ APPOINTMENT_SELECT = """
 """
 
 
+def _pick_fields(data: dict[str, Any], fields: tuple[str, ...]) -> dict[str, Any]:
+    return serialize_row({k: data[k] for k in fields if k in data})  # type: ignore[return-value]
+
+
 def _split_prefixed(row: dict[str, Any], prefix: str) -> dict[str, Any]:
     out: dict[str, Any] = {}
     plen = len(prefix)
@@ -55,6 +63,22 @@ def _split_prefixed(row: dict[str, Any], prefix: str) -> dict[str, Any]:
         if key.startswith(prefix):
             out[key[plen:]] = value
     return serialize_row(out)  # type: ignore[return-value]
+
+
+def trim_pet_for_appointment(pet: dict[str, Any]) -> dict[str, Any]:
+    return _pick_fields(pet, APPOINTMENT_PET_FIELDS)
+
+
+def trim_pet_for_invoice(pet: dict[str, Any]) -> dict[str, Any]:
+    return _pick_fields(pet, INVOICE_PET_FIELDS)
+
+
+def trim_owner(owner: dict[str, Any]) -> dict[str, Any]:
+    return _pick_fields(owner, OWNER_FIELDS)
+
+
+def trim_doctor(doctor: dict[str, Any]) -> dict[str, Any]:
+    return _pick_fields(doctor, DOCTOR_FIELDS)
 
 
 def enrich_appointment(row: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -68,9 +92,9 @@ def enrich_appointment(row: dict[str, Any] | None) -> dict[str, Any] | None:
         "Appt_Status": row["Appt_Status"],
     }
     serialized = serialize_row(base)  # type: ignore[assignment]
-    serialized["pet"] = _split_prefixed(row, "pet_")
-    serialized["owner"] = _split_prefixed(row, "owner_")
-    serialized["doctor"] = _split_prefixed(row, "doctor_")
+    serialized["pet"] = trim_pet_for_appointment(_split_prefixed(row, "pet_"))
+    serialized["owner"] = trim_owner(_split_prefixed(row, "owner_"))
+    serialized["doctor"] = trim_doctor(_split_prefixed(row, "doctor_"))
     return serialized
 
 
@@ -89,6 +113,16 @@ def fetch_appointment_by_id(cursor, appointment_id: int) -> dict[str, Any] | Non
 def fetch_appointments_filtered(cursor, where_sql: str, params: tuple) -> list[dict[str, Any]]:
     cursor.execute(APPOINTMENT_SELECT + " " + where_sql, params)
     return enrich_appointments(cursor.fetchall())
+
+
+def fetch_pet_owner_for_appointment(cursor, appointment_id: int) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """Return trimmed pet and owner for an appointment (invoice pending responses)."""
+    row = fetch_appointment_by_id(cursor, appointment_id)
+    if row is None:
+        return None, None
+    pet = trim_pet_for_invoice(_split_prefixed(row, "pet_"))
+    owner = trim_owner(_split_prefixed(row, "owner_"))
+    return pet, owner
 
 
 def _aggregated_drug_quantities(cursor, record_id: int) -> list[dict[str, Any]]:

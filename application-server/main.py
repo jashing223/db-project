@@ -2,8 +2,10 @@
 
 import logging
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from routers import api_router
 
@@ -21,5 +23,21 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(_request: Request, exc: RequestValidationError) -> JSONResponse:
+    messages: list[str] = []
+    for err in exc.errors():
+        loc = err.get("loc", ())
+        field = ".".join(str(part) for part in loc if part != "body")
+        msg = err.get("msg", "Invalid value")
+        if field:
+            messages.append(f"{field}: {msg}")
+        else:
+            messages.append(msg)
+    detail = "; ".join(messages) if messages else "Validation error"
+    return JSONResponse(status_code=422, content={"detail": detail})
+
 
 app.include_router(api_router)

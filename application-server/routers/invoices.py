@@ -4,21 +4,42 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from dependencies import get_db
 from errors import not_found, raise_http_from_db_error
-from helpers import enrich_appointment, fetch_appointment_by_id
+from helpers import fetch_pet_owner_for_appointment
 from schemas.invoices import InvoicePay
 from serialize import serialize_row, serialize_rows
 
 router = APIRouter(tags=["invoices"])
 
+_RECORD_FIELDS = (
+    "Record_ID",
+    "Consultation_Date",
+    "Clinical_Notes",
+    "Final_Diagnosis",
+    "Record_Locked",
+)
 
-def _fetch_record_with_details(cur, record_id: int) -> dict | None:
-    cur.execute("SELECT * FROM Medical_Records WHERE Record_ID = %s", (record_id,))
+
+def _fetch_pending_record(cur, record_id: int) -> dict | None:
+    cur.execute(
+        """
+        SELECT Record_ID, Consultation_Date, Clinical_Notes, Final_Diagnosis, Record_Locked
+        FROM Medical_Records
+        WHERE Record_ID = %s
+        """,
+        (record_id,),
+    )
     row = cur.fetchone()
     if not row:
         return None
     record = serialize_row(row)
     cur.execute(
-        "SELECT * FROM Treatment_Details WHERE Record_ID = %s ORDER BY Detail_ID",
+        """
+        SELECT t.Detail_ID, t.Item_ID, c.Item_Name, t.Numeric_Value, t.Historical_Price
+        FROM Treatment_Details t
+        JOIN Catalog_Items c ON c.Item_ID = t.Item_ID
+        WHERE t.Record_ID = %s
+        ORDER BY t.Detail_ID
+        """,
         (record_id,),
     )
     record["details"] = serialize_rows(cur.fetchall())
@@ -43,7 +64,7 @@ def list_pending_invoices(conn=Depends(get_db)) -> list[dict]:
 
             for inv_row in invoices:
                 inv = serialize_row(inv_row)
-                record = _fetch_record_with_details(cur, inv["Record_ID"])
+                record = _fetch_pending_record(cur, inv["Record_ID"])
                 if not record:
                     continue
 
@@ -52,13 +73,15 @@ def list_pending_invoices(conn=Depends(get_db)) -> list[dict]:
                     (inv["Record_ID"],),
                 )
                 mr = cur.fetchone()
-                appt_row = fetch_appointment_by_id(cur, mr["Appointment_ID"]) if mr else None
-                appt = enrich_appointment(appt_row) if appt_row else None
+                pet, owner = (
+                    fetch_pet_owner_for_appointment(cur, mr["Appointment_ID"])
+                    if mr
+                    else (None, None)
+                )
 
                 inv["record"] = record
-                inv["appt"] = appt
-                inv["pet"] = appt.get("pet") if appt else None
-                inv["owner"] = appt.get("owner") if appt else None
+                inv["pet"] = pet
+                inv["owner"] = owner
                 results.append(inv)
 
             return results

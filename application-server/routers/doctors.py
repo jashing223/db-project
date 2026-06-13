@@ -15,7 +15,7 @@ def list_doctors(conn=Depends(get_db)) -> list[dict]:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT s.Staff_ID, s.Staff_Name, s.Role_Level, d.Specialty
+                SELECT s.Staff_ID, s.Staff_Name, d.Specialty
                 FROM Staff s
                 JOIN Doctors d ON s.Staff_ID = d.Staff_ID
                 WHERE s.Role_Level = 3 AND s.Status_Active = TRUE

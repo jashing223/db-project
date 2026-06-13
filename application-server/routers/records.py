@@ -10,6 +10,19 @@ from serialize import serialize_row
 
 router = APIRouter(tags=["records"])
 
+_DRAFT_FIELDS = frozenset({"Clinical_Notes", "Final_Diagnosis"})
+_LOCK_FIELDS = frozenset({"Clinical_Notes", "Final_Diagnosis"})
+
+
+def _build_set_clause(data: dict, allowed: frozenset[str]) -> tuple[list[str], list]:
+    updates: list[str] = []
+    params: list = []
+    for field in allowed:
+        if field in data:
+            updates.append(f"{field} = %s")
+            params.append(data[field])
+    return updates, params
+
 
 def _fetch_record(cur, record_id: int, with_details: bool = False) -> dict | None:
     cur.execute("SELECT * FROM Medical_Records WHERE Record_ID = %s", (record_id,))
@@ -25,8 +38,6 @@ def _fetch_record(cur, record_id: int, with_details: bool = False) -> dict | Non
         from serialize import serialize_rows
 
         result["details"] = serialize_rows(cur.fetchall())
-    else:
-        result["details"] = []
     return result
 
 
@@ -146,14 +157,15 @@ def save_draft(record_id: int, body: RecordDraft, conn=Depends(get_db)) -> dict:
             if not cur.fetchone():
                 raise not_found("Medical record")
 
-            cur.execute(
-                """
-                UPDATE Medical_Records
-                SET Clinical_Notes = %s, Final_Diagnosis = %s
-                WHERE Record_ID = %s
-                """,
-                (body.Clinical_Notes, body.Final_Diagnosis, record_id),
-            )
+            data = body.model_dump(exclude_unset=True)
+            updates, params = _build_set_clause(data, _DRAFT_FIELDS)
+            if updates:
+                params.append(record_id)
+                cur.execute(
+                    f"UPDATE Medical_Records SET {', '.join(updates)} WHERE Record_ID = %s",
+                    tuple(params),
+                )
+
             record = _fetch_record(cur, record_id, with_details=True)
             return record  # type: ignore[return-value]
     except HTTPException:
@@ -179,13 +191,13 @@ def lock_record(record_id: int, body: RecordLock, conn=Depends(get_db)) -> dict:
 
             verify_drug_stock_for_record(cur, record_id)
 
+            data = body.model_dump(exclude_unset=True)
+            updates, params = _build_set_clause(data, _LOCK_FIELDS)
+            updates.append("Record_Locked = TRUE")
+            params.append(record_id)
             cur.execute(
-                """
-                UPDATE Medical_Records
-                SET Clinical_Notes = %s, Final_Diagnosis = %s, Record_Locked = TRUE
-                WHERE Record_ID = %s
-                """,
-                (body.Clinical_Notes, body.Final_Diagnosis, record_id),
+                f"UPDATE Medical_Records SET {', '.join(updates)} WHERE Record_ID = %s",
+                tuple(params),
             )
             cur.execute(
                 "UPDATE Appointments SET Appt_Status = 2 WHERE Appointment_ID = %s",

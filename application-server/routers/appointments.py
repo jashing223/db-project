@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from dependencies import get_db
 from errors import conflict, not_found, raise_http_from_db_error
-from helpers import ALL_SLOTS, BUSY_SLOTS, enrich_appointment, fetch_appointment_by_id, fetch_appointments_filtered
+from helpers import ALL_SLOTS, BUSY_SLOTS, fetch_appointment_by_id, fetch_appointments_filtered
 from schemas.appointments import AppointmentCreate
 from serialize import serialize_row
 
@@ -37,6 +37,18 @@ def _is_slot_available(cur, doctor_id: int, scheduled_time: str) -> bool:
     return cur.fetchone() is None
 
 
+def _flat_appointment(row: dict) -> dict:
+    return serialize_row(  # type: ignore[return-value]
+        {
+            "Appointment_ID": row["Appointment_ID"],
+            "Pet_ID": row["Pet_ID"],
+            "Doc_Staff_ID": row["Doc_Staff_ID"],
+            "Scheduled_Time": row["Scheduled_Time"],
+            "Appt_Status": row["Appt_Status"],
+        }
+    )
+
+
 @router.post("/appointments", status_code=201)
 def create_appointment(body: AppointmentCreate, conn=Depends(get_db)) -> dict:
     try:
@@ -55,7 +67,7 @@ def create_appointment(body: AppointmentCreate, conn=Depends(get_db)) -> dict:
             row = fetch_appointment_by_id(cur, appt_id)
             if not row:
                 raise not_found("Appointment")
-            return enrich_appointment(row)  # type: ignore[return-value]
+            return _flat_appointment(row)
     except HTTPException:
         raise
     except Exception as exc:
@@ -105,14 +117,7 @@ def cancel_appointment(appointment_id: int, conn=Depends(get_db)) -> dict:
                 "UPDATE Appointments SET Appt_Status = 2 WHERE Appointment_ID = %s",
                 (appointment_id,),
             )
-            cur.execute(
-                """
-                SELECT Appointment_ID, Pet_ID, Doc_Staff_ID, Scheduled_Time, Appt_Status
-                FROM Appointments WHERE Appointment_ID = %s
-                """,
-                (appointment_id,),
-            )
-            return serialize_row(cur.fetchone())  # type: ignore[return-value]
+            return {"Appointment_ID": appointment_id, "Appt_Status": 2}
     except HTTPException:
         raise
     except Exception as exc:

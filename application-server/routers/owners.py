@@ -6,36 +6,44 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from dependencies import get_db
 from errors import not_found, raise_http_from_db_error
-from schemas.owners import OwnerCreate, OwnerOut, OwnerUpdate
-from serialize import serialize_row
+from schemas.owners import OwnerCreate, OwnerUpdate
+from serialize import serialize_row, serialize_rows
 
 router = APIRouter(tags=["owners"])
 
+_PET_COLUMNS = """
+    Pet_ID, Owner_ID, Pet_Name, Species_Type, Breed_Name,
+    Birth_Date, Current_Weight, Age
+"""
 
-@router.get("/owners/search")
-def search_owners(q: str = "", conn=Depends(get_db)) -> list[dict]:
+
+@router.get("/owners")
+def list_owners(conn=Depends(get_db)) -> list[dict]:
     try:
         with conn.cursor() as cur:
-            if q.strip():
-                pattern = f"%{q.strip()}%"
+            cur.execute(
+                """
+                SELECT * FROM Owners
+                WHERE Is_Anonymized = FALSE
+                ORDER BY Owner_ID
+                """
+            )
+            owners = cur.fetchall()
+            results: list[dict] = []
+            for owner_row in owners:
+                owner = serialize_row(owner_row)  # type: ignore[assignment]
                 cur.execute(
-                    """
-                    SELECT * FROM Owners
-                    WHERE Is_Anonymized = FALSE
-                      AND (Full_Name LIKE %s OR Phone_Number LIKE %s)
-                    ORDER BY Owner_ID
+                    f"""
+                    SELECT {_PET_COLUMNS}
+                    FROM Pets
+                    WHERE Owner_ID = %s
+                    ORDER BY Pet_ID
                     """,
-                    (pattern, pattern),
+                    (owner["Owner_ID"],),
                 )
-            else:
-                cur.execute(
-                    """
-                    SELECT * FROM Owners
-                    WHERE Is_Anonymized = FALSE
-                    ORDER BY Owner_ID
-                    """
-                )
-            return [serialize_row(r) for r in cur.fetchall()]  # type: ignore[misc]
+                owner["pets"] = serialize_rows(cur.fetchall())
+                results.append(owner)
+            return results
     except Exception as exc:
         raise_http_from_db_error(exc)
         return []
@@ -68,20 +76,22 @@ def update_owner(owner_id: int, body: OwnerUpdate, conn=Depends(get_db)) -> dict
             cur.execute("SELECT Owner_ID FROM Owners WHERE Owner_ID = %s", (owner_id,))
             if not cur.fetchone():
                 raise not_found("Owner")
-            cur.execute(
-                """
-                UPDATE Owners
-                SET Full_Name = %s, Phone_Number = %s, Email_Address = %s, Physical_Address = %s
-                WHERE Owner_ID = %s
-                """,
-                (
-                    body.Full_Name,
-                    body.Phone_Number,
-                    body.Email_Address,
-                    body.Physical_Address,
-                    owner_id,
-                ),
-            )
+
+            updates: list[str] = []
+            params: list = []
+            data = body.model_dump(exclude_unset=True)
+            for field in ("Full_Name", "Phone_Number", "Email_Address", "Physical_Address"):
+                if field in data:
+                    updates.append(f"{field} = %s")
+                    params.append(data[field])
+
+            if updates:
+                params.append(owner_id)
+                cur.execute(
+                    f"UPDATE Owners SET {', '.join(updates)} WHERE Owner_ID = %s",
+                    tuple(params),
+                )
+
             cur.execute("SELECT * FROM Owners WHERE Owner_ID = %s", (owner_id,))
             return serialize_row(cur.fetchone())  # type: ignore[return-value]
     except HTTPException:
