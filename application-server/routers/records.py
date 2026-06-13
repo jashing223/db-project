@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from dependencies import get_db
 from errors import not_found, raise_http_from_db_error
+from helpers import verify_drug_stock_for_detail, verify_drug_stock_for_record
 from schemas.records import DetailCreate, RecordCreate, RecordDraft, RecordLock
 from serialize import serialize_row
 
@@ -83,6 +84,8 @@ def add_detail(record_id: int, body: DetailCreate, conn=Depends(get_db)) -> dict
             cur.execute("SELECT Record_ID FROM Medical_Records WHERE Record_ID = %s", (record_id,))
             if not cur.fetchone():
                 raise not_found("Medical record")
+
+            verify_drug_stock_for_detail(cur, record_id, body.Item_ID, body.Numeric_Value)
 
             cur.execute(
                 """
@@ -173,6 +176,8 @@ def lock_record(record_id: int, body: RecordLock, conn=Depends(get_db)) -> dict:
                 raise not_found("Medical record")
             if row["Record_Locked"]:
                 raise HTTPException(status_code=400, detail="Medical record is already locked")
+
+            verify_drug_stock_for_record(cur, record_id)
 
             cur.execute(
                 """

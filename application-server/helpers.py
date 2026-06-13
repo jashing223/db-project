@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Any
 
+from errors import bad_request
 from serialize import serialize_row, serialize_rows
 
 ALL_SLOTS = ["09:00", "10:00", "11:00", "13:00", "14:00", "15:00", "16:00"]
@@ -87,3 +89,91 @@ def fetch_appointment_by_id(cursor, appointment_id: int) -> dict[str, Any] | Non
 def fetch_appointments_filtered(cursor, where_sql: str, params: tuple) -> list[dict[str, Any]]:
     cursor.execute(APPOINTMENT_SELECT + " " + where_sql, params)
     return enrich_appointments(cursor.fetchall())
+
+
+def _aggregated_drug_quantities(cursor, record_id: int) -> list[dict[str, Any]]:
+    cursor.execute(
+        """
+        SELECT t.Item_ID, c.Item_Name, SUM(t.Numeric_Value) AS total_qty
+        FROM Treatment_Details t
+        JOIN Catalog_Items c ON c.Item_ID = t.Item_ID
+        WHERE t.Record_ID = %s AND c.Item_Category = 1
+        GROUP BY t.Item_ID, c.Item_Name
+        ORDER BY t.Item_ID
+        """,
+        (record_id,),
+    )
+    return cursor.fetchall()
+
+
+def _as_number(value: Decimal | float | int) -> float:
+    if isinstance(value, Decimal):
+        return float(value)
+    return float(value)
+
+
+def verify_drug_stock_for_detail(
+    cursor,
+    record_id: int,
+    item_id: int,
+    numeric_value: float,
+) -> None:
+    """Ensure adding a drug detail would not exceed current catalog stock."""
+    cursor.execute(
+        """
+        SELECT Item_ID, Item_Name, Item_Category
+        FROM Catalog_Items
+        WHERE Item_ID = %s
+        """,
+        (item_id,),
+    )
+    item = cursor.fetchone()
+    if not item:
+        raise bad_request("Catalog item not found")
+    if item["Item_Category"] != 1:
+        return
+
+    cursor.execute(
+        """
+        SELECT COALESCE(SUM(Numeric_Value), 0) AS existing_qty
+        FROM Treatment_Details
+        WHERE Record_ID = %s AND Item_ID = %s
+        """,
+        (record_id, item_id),
+    )
+    existing_qty = _as_number(cursor.fetchone()["existing_qty"])
+    total_needed = existing_qty + numeric_value
+
+    cursor.execute(
+        """
+        SELECT Stock_Quantity
+        FROM Catalog_Items
+        WHERE Item_ID = %s AND Item_Category = 1
+        FOR UPDATE
+        """,
+        (item_id,),
+    )
+    catalog = cursor.fetchone()
+    if catalog is None or _as_number(catalog["Stock_Quantity"]) < total_needed:
+        raise bad_request(f"Insufficient stock for item {item['Item_Name']}")
+
+
+def verify_drug_stock_for_record(cursor, record_id: int) -> None:
+    """Ensure aggregated drug quantities for a record do not exceed current stock."""
+    for row in _aggregated_drug_quantities(cursor, record_id):
+        item_id = row["Item_ID"]
+        total_qty = _as_number(row["total_qty"])
+        item_name = row["Item_Name"]
+
+        cursor.execute(
+            """
+            SELECT Stock_Quantity
+            FROM Catalog_Items
+            WHERE Item_ID = %s AND Item_Category = 1
+            FOR UPDATE
+            """,
+            (item_id,),
+        )
+        catalog = cursor.fetchone()
+        if catalog is None or _as_number(catalog["Stock_Quantity"]) < total_qty:
+            raise bad_request(f"Insufficient stock for item {item_name}")
