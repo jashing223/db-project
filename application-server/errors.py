@@ -2,8 +2,14 @@
 
 from __future__ import annotations
 
+import logging
+
 import pymysql
 from fastapi import HTTPException
+
+logger = logging.getLogger(__name__)
+
+GENERIC_INTERNAL_ERROR = "An internal server error occurred"
 
 
 def raise_http_from_db_error(exc: Exception) -> None:
@@ -14,13 +20,16 @@ def raise_http_from_db_error(exc: Exception) -> None:
         code = exc.args[0] if exc.args else 0
         message = str(exc.args[1]) if len(exc.args) > 1 else str(exc)
 
-        if code == 1644:  # SIGNAL from triggers
+        if code == 1644:  # SIGNAL from triggers (e.g. locked record)
             raise HTTPException(status_code=400, detail=message) from exc
         if code in (1062, 1586):  # duplicate entry
             raise HTTPException(status_code=409, detail=message) from exc
-        raise HTTPException(status_code=500, detail=message) from exc
 
-    raise HTTPException(status_code=500, detail=str(exc)) from exc
+        logger.exception("Unexpected database error (code=%s): %s", code, message)
+        raise HTTPException(status_code=500, detail=GENERIC_INTERNAL_ERROR) from exc
+
+    logger.exception("Unexpected application error: %s", exc)
+    raise HTTPException(status_code=500, detail=GENERIC_INTERNAL_ERROR) from exc
 
 
 def not_found(entity: str) -> HTTPException:
@@ -29,3 +38,7 @@ def not_found(entity: str) -> HTTPException:
 
 def conflict(message: str) -> HTTPException:
     return HTTPException(status_code=409, detail=message)
+
+
+def bad_request(message: str) -> HTTPException:
+    return HTTPException(status_code=400, detail=message)
