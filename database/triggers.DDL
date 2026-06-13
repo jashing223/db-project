@@ -112,12 +112,18 @@ FOR EACH ROW
 BEGIN
     -- 當狀態嚴格從 0 (False) 轉為 1 (True) 時觸發
     IF NEW.Record_Locked = TRUE AND OLD.Record_Locked = FALSE THEN
-        -- 將該病歷下所有 Item_Category = 1 (藥品) 的數量，從 Catalog_Items 中扣除
+        -- 依 Item_ID 聚合後扣減，避免同一藥品多筆明細重複 JOIN 導致少扣
         UPDATE Catalog_Items c
-        JOIN Treatment_Details t ON c.Item_ID = t.Item_ID
-        SET c.Stock_Quantity = c.Stock_Quantity - t.Numeric_Value
-        WHERE t.Record_ID = NEW.Record_ID
-          AND c.Item_Category = 1;
+        JOIN (
+            SELECT t.Item_ID, SUM(t.Numeric_Value) AS total_qty
+            FROM Treatment_Details t
+            JOIN Catalog_Items ci ON ci.Item_ID = t.Item_ID
+            WHERE t.Record_ID = NEW.Record_ID
+              AND ci.Item_Category = 1
+            GROUP BY t.Item_ID
+        ) agg ON c.Item_ID = agg.Item_ID
+        SET c.Stock_Quantity = c.Stock_Quantity - agg.total_qty
+        WHERE c.Item_Category = 1;
     END IF;
 END$$
 
