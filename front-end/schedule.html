@@ -109,12 +109,21 @@ tr.cancelled td{opacity:.45;text-decoration:line-through}
 document.getElementById('topbar-date').textContent = todayStr();
 document.getElementById('q-date').value = todayStr();
 
+let _doctors   = [];
+let _lastAppts = [];
+
 // 載入醫師清單
 api('GET', '/doctors').then(docs => {
+  _doctors = docs;
   const sel = document.getElementById('q-doctor');
+  if (!docs.length) {
+    sel.innerHTML = '<option value="">（無在職醫師資料）</option>';
+    toast('醫師清單為空，請確認資料庫已載入 gen_mock_data.sql', 'error');
+    return;
+  }
   sel.innerHTML = '<option value="">— 選擇醫師 —</option>' +
     docs.map(d => `<option value="${d.Staff_ID}">${d.Staff_Name}（${d.Specialty}）</option>`).join('');
-});
+}).catch(e => toast('載入醫師清單失敗：' + e.message, 'error'));
 
 async function querySchedule() {
   const did  = document.getElementById('q-doctor').value;
@@ -124,7 +133,8 @@ async function querySchedule() {
 
   // GET /appointments?doctor_id=&date=
   const appts = await api('GET', `/appointments?doctor_id=${did}&date=${date}`);
-  const doctor = MOCK.staff.find(d => d.Staff_ID == did);
+  _lastAppts = appts;
+  const doctor = _doctors.find(d => d.Staff_ID == did);
 
   const card = document.getElementById('result-card');
   card.style.display = '';
@@ -132,9 +142,8 @@ async function querySchedule() {
     `${doctor?.Staff_Name}（${doctor?.Specialty}）　${date}　預約清單`;
 
   // 統計
-  const pending   = appts.filter(a => a.Appt_Status === 0).length;
-  const done      = appts.filter(a => a.Appt_Status === 2).length;
-  const cancelled = appts.filter(a => a.Appt_Status === 2 && !MOCK.records.some(r => r.Appointment_ID === a.Appointment_ID)).length;
+  const pending = appts.filter(a => a.Appt_Status === 0).length;
+  const done    = appts.filter(a => a.Appt_Status === 2).length;
 
   document.getElementById('summary-row').innerHTML = `
     <div class="summary-chip">全部<span>${appts.length}</span></div>
@@ -169,7 +178,7 @@ async function querySchedule() {
 }
 
 async function cancelAppt(aid) {
-  const appt = MOCK.appointments.find(a => a.Appointment_ID === aid);
+  const appt = _lastAppts.find(a => a.Appointment_ID === aid);
   if (!confirm(`確定取消 ${slotFromDatetime(appt?.Scheduled_Time)} 的預約？`)) return;
   // PATCH /appointments/:id/cancel → Appt_Status = 2
   await api('PATCH', `/appointments/${aid}/cancel`);

@@ -9,7 +9,7 @@ const SESSION_KEY = 'pet_hospital_session';
 
 /* ── 對照表 ── */
 const ROLE_NAME     = { 1: '櫃檯行政', 2: '護理人員', 3: '獸醫師', 4: '經理' };
-const CATEGORY_LABEL = { 1: '藥品', 2: '檢驗', 3: '治療' };
+const CATEGORY_LABEL = { 1: '藥品', 2: '檢驗', 3: '治療', 4: '住宿' };
 function roleName(n)     { return ROLE_NAME[n]      || String(n); }
 function categoryLabel(n){ return CATEGORY_LABEL[n]  || String(n); }
 
@@ -47,11 +47,6 @@ function getDefaultData() {
     // Staff 同時扮演 Staff + Doctors；Role_Level=3 者有 Specialty
     staff: [
       { Staff_ID: 1, Staff_Name: '王大明', Role_Level: 3, Specialty: '一般內科' },
-      { Staff_ID: 2, Staff_Name: '李小芬', Role_Level: 3, Specialty: '外科'     },
-      { Staff_ID: 3, Staff_Name: '趙志遠', Role_Level: 3, Specialty: '皮膚科'   },
-      { Staff_ID: 4, Staff_Name: '王小美', Role_Level: 1, Specialty: null       },
-      { Staff_ID: 5, Staff_Name: '陳主任', Role_Level: 4, Specialty: null       },
-      { Staff_ID: 6, Staff_Name: '林護理師',Role_Level: 2, Specialty: null      },
     ],
     appointments: [
       { Appointment_ID: 1, Pet_ID: 1, Doc_Staff_ID: 1, Scheduled_Time: todayAt('09:00'), Appt_Status: 0 },
@@ -65,6 +60,8 @@ function getDefaultData() {
       { Item_ID: 4, Item_Name: 'X 光檢查',        Item_Category: 2, Current_Price: 900,  Stock_Quantity: null, Is_Discontinued: false },
       { Item_ID: 5, Item_Name: '疫苗（三合一）',  Item_Category: 1, Current_Price: 800,  Stock_Quantity: 30,   Is_Discontinued: false },
       { Item_ID: 6, Item_Name: '外科縫合處置',    Item_Category: 3, Current_Price: 1200, Stock_Quantity: null, Is_Discontinued: false },
+      { Item_ID: 7, Item_Name: '一般病房住宿',    Item_Category: 4, Current_Price: 800,  Stock_Quantity: null, Is_Discontinued: false },
+      { Item_ID: 8, Item_Name: '加護病房住宿',    Item_Category: 4, Current_Price: 1800, Stock_Quantity: null, Is_Discontinued: false },
     ],
     records:  [],
     invoices: [],
@@ -122,66 +119,42 @@ let _nextId = _loaded._nextId || 200;
 function getCurrentUser() {
   try {
     const s = localStorage.getItem(SESSION_KEY);
-    if (s) {
-      const u = JSON.parse(s);
-      if (USE_MOCK) {
-        if (MOCK.staff.find(m => m.Staff_ID === u.Staff_ID)) return u;
-      } else if (u.access_token) {
-        return u;
-      }
+    if (!s) return null;
+    const u = JSON.parse(s);
+    if (USE_MOCK) {
+      // mock 模式：確認 staff 還存在
+      if (MOCK.staff.find(m => m.Staff_ID === u.Staff_ID)) return u;
+    } else {
+      // 真實模式：有 token 就算登入
+      if (u._token) return u;
     }
   } catch(e) {}
-  return null; // 未登入
+  return null;
 }
 
-async function login(staffId) {
-  if (USE_MOCK) {
-    const u = MOCK.staff.find(s => s.Staff_ID === Number(staffId));
-    if (!u) return;
-    localStorage.setItem(SESSION_KEY, JSON.stringify(u));
-    location.href = ROLE_HOME[u.Role_Level] || 'appointment.html';
-    return;
-  }
-  const r = await fetch(API_BASE + '/auth/login', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ Staff_ID: Number(staffId) }),
-  });
-  if (!r.ok) throw new Error(await r.text());
-  const data = await r.json();
-  const session = { ...data.user, access_token: data.access_token };
-  localStorage.setItem(SESSION_KEY, JSON.stringify(session));
-  location.href = ROLE_HOME[session.Role_Level] || 'appointment.html';
+function getToken() {
+  try {
+    const s = localStorage.getItem(SESSION_KEY);
+    if (s) return JSON.parse(s)._token || null;
+  } catch(e) {}
+  return null;
+}
+
+function saveSession(user, token = null) {
+  localStorage.setItem(SESSION_KEY, JSON.stringify({ ...user, _token: token }));
+}
+
+function login(staffId) {
+  // mock 模式專用（同步）
+  const u = MOCK.staff.find(s => s.Staff_ID === Number(staffId));
+  if (!u) return;
+  saveSession(u);
+  location.href = 'appointment.html';
 }
 
 function logout() {
   localStorage.removeItem(SESSION_KEY);
   location.href = 'login.html';
-}
-
-/* ── Owners cache (GET /owners + client filter) ── */
-let _ownersCache = null;
-
-async function fetchOwners(force = false) {
-  if (!force && _ownersCache) return _ownersCache;
-  _ownersCache = await api('GET', '/owners');
-  return _ownersCache;
-}
-
-function filterOwners(owners, q) {
-  if (!q || !q.trim()) return owners;
-  return owners.filter(o =>
-    !o.Is_Anonymized &&
-    (o.Full_Name.includes(q) || (o.Phone_Number && o.Phone_Number.includes(q)))
-  );
-}
-
-async function searchOwners(q) {
-  return filterOwners(await fetchOwners(), q);
-}
-
-function invalidateOwnersCache() {
-  _ownersCache = null;
 }
 
 /* ── 固定 busy slots ── */
@@ -198,15 +171,19 @@ async function api(method, path, body) {
       }, 60)
     );
   }
+  const token = getToken();
   const headers = { 'Content-Type': 'application/json' };
-  const u = getCurrentUser();
-  if (u?.access_token) headers['Authorization'] = `Bearer ${u.access_token}`;
+  if (token) headers['Authorization'] = `Bearer ${token}`;
   const r = await fetch(API_BASE + path, {
     method,
     headers,
     body: body ? JSON.stringify(body) : undefined,
   });
-  if (!r.ok) throw new Error(await r.text());
+  if (r.status === 401) { logout(); return; }   // token 過期或無效 → 強制登出
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({ detail: r.statusText }));
+    throw new Error(err.detail || r.statusText);
+  }
   return r.json();
 }
 
@@ -215,34 +192,25 @@ function mockRoute(method, path, body) {
   const url = new URL('http://x' + path);
 
   // ── 飼主 ──
-  if (method === 'GET' && path === '/owners') {
-    return MOCK.owners.filter(o => !o.Is_Anonymized).map(o => ({
-      ...o,
-      pets: MOCK.pets
-        .filter(p => p.Owner_ID === o.Owner_ID)
-        .map(p => ({ ...p, Age: calcAgeYears(p.Birth_Date) })),
-    }));
-  }
-  if (path.startsWith('/owners/search')) {
-    const q = url.searchParams.get('q') || '';
-    return MOCK.owners.filter(o =>
-      !o.Is_Anonymized && (!q || o.Full_Name.includes(q) || o.Phone_Number.includes(q))
-    );
+  if (path === '/owners') {
+    return MOCK.owners
+      .filter(o => !o.Is_Anonymized)
+      .map(o => ({ ...o, pets: MOCK.pets.filter(p => p.Owner_ID === o.Owner_ID) }));
   }
   if (method === 'POST' && path === '/owners') {
     const o = { Owner_ID: _nextId++, Is_Anonymized: false, ...body };
-    MOCK.owners.push(o); saveMock(); invalidateOwnersCache(); return o;
+    MOCK.owners.push(o); saveMock(); return o;
   }
   if (method === 'PATCH' && path.match(/^\/owners\/\d+$/) && !path.includes('/anonymize')) {
     const o = MOCK.owners.find(o => o.Owner_ID === parseInt(path.split('/')[2]));
     if (!o) throw new Error('飼主不存在');
-    Object.assign(o, body); saveMock(); invalidateOwnersCache(); return o;
+    Object.assign(o, body); saveMock(); return o;
   }
   if (method === 'PATCH' && path.includes('/anonymize')) {
     const o = MOCK.owners.find(o => o.Owner_ID === parseInt(path.split('/')[2]));
     if (!o) throw new Error('飼主不存在');
     Object.assign(o, { Full_Name: 'Deleted User', Phone_Number: `deleted-${o.Owner_ID}-${Date.now()}`, Email_Address: null, Physical_Address: null, Is_Anonymized: true });
-    saveMock(); invalidateOwnersCache(); return o;
+    saveMock(); return o;
   }
 
   // ── 寵物 ──
@@ -328,7 +296,7 @@ function mockRoute(method, path, body) {
     const rec  = MOCK.records.find(r => r.Record_ID === rid);
     if (rec.Record_Locked) throw new Error('病歷已鎖定，無法新增項目');
     const item   = MOCK.catalog.find(i => i.Item_ID === body.Item_ID);
-    const detail = { Detail_ID: _nextId++, Record_ID: rid, Historical_Price: item.Current_Price, ...body };
+    const detail = { Detail_ID: _nextId++, Record_ID: rid, ...body, Historical_Price: item.Current_Price };
     rec.details.push(detail);
     const inv = MOCK.invoices.find(i => i.Record_ID === rid);
     if (inv) inv.Total_Billed = +(inv.Total_Billed + detail.Historical_Price * detail.Numeric_Value).toFixed(2);
@@ -373,7 +341,11 @@ function mockRoute(method, path, body) {
         const appt = MOCK.appointments.find(a => a.Appointment_ID === rec.Appointment_ID);
         const pet  = appt ? MOCK.pets.find(p => p.Pet_ID === appt.Pet_ID) : null;
         const owner = pet ? MOCK.owners.find(o => o.Owner_ID === pet.Owner_ID) : null;
-        return { ...i, record: rec, appt, pet, owner };
+        const enrichedDetails = (rec.details || []).map(d => {
+          const cat = MOCK.catalog.find(c => c.Item_ID === d.Item_ID);
+          return { ...d, Item_Name: cat?.Item_Name || '' };
+        });
+        return { ...i, record: { ...rec, details: enrichedDetails }, appt, pet, owner };
       })
       .filter(Boolean);
   }

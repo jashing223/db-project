@@ -138,13 +138,20 @@ tr:hover td{background:#f9fafb}
 <script src="common.js"></script>
 <script>
 let state = { owner: null, pet: null, Doc_Staff_ID: null, selectedTime: null };
+let _owners       = [];   // 一次載入，前端篩選
+let _petsForOwner = [];   // 選定飼主後快取
 
 document.getElementById('topbar-date').textContent = todayStr();
+api('GET', '/owners').then(owners => { _owners = owners; });
 
-async function searchOwner(q) {
+function searchOwner(q) {
   const el = document.getElementById('owner-results');
   if (!q || !q.trim()) { el.innerHTML = ''; return; }
-  const owners = await searchOwners(q);
+  const q2 = q.toLowerCase();
+  const owners = _owners.filter(o =>
+    o.Full_Name.toLowerCase().includes(q2) ||
+    (o.Phone_Number && o.Phone_Number.includes(q))
+  );
   if (!owners.length) {
     el.innerHTML = '<div style="font-size:12px;color:#9ca3af;padding:4px 0">找不到飼主</div>';
     return;
@@ -161,21 +168,25 @@ async function searchOwner(q) {
 }
 
 async function selectOwner(id) {
-  const owners = await fetchOwners();
-  state.owner = owners.find(o => o.Owner_ID === id);
+  state.owner = _owners.find(o => o.Owner_ID === id);
   document.getElementById('owner-results').innerHTML =
     `<div class="pet-chip">✓ ${state.owner.Full_Name}　${state.owner.Phone_Number}</div>`;
 
   // 載入該飼主的寵物 (Pets view)
-  const pets = await api('GET', `/pets?owner_id=${id}`);
+  _petsForOwner = await api('GET', `/pets?owner_id=${id}`);
   const sel  = document.getElementById('pet-select');
   sel.innerHTML = '<option value="">— 選擇 —</option>' +
-    pets.map(p => `<option value="${p.Pet_ID}">${p.Pet_Name}（${p.Species_Type}）</option>`).join('');
+    _petsForOwner.map(p => `<option value="${p.Pet_ID}">${p.Pet_Name}（${p.Species_Type}）</option>`).join('');
   document.getElementById('pet-card').style.display = '';
 
   // 載入醫師清單
   const docs = await api('GET', '/doctors');
   const dsel = document.getElementById('doctor-select');
+  if (!docs.length) {
+    dsel.innerHTML = '<option value="">（無在職醫師資料）</option>';
+    toast('醫師清單為空，請確認資料庫已載入 gen_mock_data.sql', 'error');
+    return;
+  }
   dsel.innerHTML = '<option value="">— 選擇醫師 —</option>' +
     docs.map(d => `<option value="${d.Staff_ID}">${d.Staff_Name}（${d.Specialty}）</option>`).join('');
   document.getElementById('appt-date').value = todayStr();
@@ -187,7 +198,7 @@ function selectPet(pid) {
     document.getElementById('schedule-card').style.display = 'none';
     return;
   }
-  const pet = MOCK.pets.find(p => p.Pet_ID == pid);
+  const pet = _petsForOwner.find(p => p.Pet_ID == pid);
   state.pet = pet;
   document.getElementById('pet-species').value = pet.Species_Type;
   document.getElementById('pet-detail').style.display = '';

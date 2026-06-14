@@ -172,9 +172,8 @@ async function openInvoice(iid) {
   const details = inv.record?.details || [];
   document.getElementById('inv-items').innerHTML = details.length
     ? details.map(d => {
-        const item = MOCK.catalog.find(c => c.Item_ID === d.Item_ID);
         return `<div class="inv-row">
-          <span>${item?.Item_Name || 'Item #' + d.Item_ID} × ${d.Numeric_Value}</span>
+          <span>${d.Item_Name || 'Item #' + d.Item_ID} × ${d.Numeric_Value}</span>
           <span>$${(d.Historical_Price * d.Numeric_Value).toLocaleString()}</span>
         </div>`;
       }).join('')
@@ -195,13 +194,11 @@ function backToList() {
 
 async function confirmPayment() {
   if (!currentInvoice) return;
-  const pay  = document.querySelector('input[name="pay"]:checked')?.value || 'cash';
-  const note = document.getElementById('inv-note').value;
+  const pay = document.querySelector('input[name="pay"]:checked')?.value || 'cash';
 
   // PATCH /invoices/:iid/pay → Payment_Status=1, Payment_Method
   await api('PATCH', `/invoices/${currentInvoice.Invoice_ID}/pay`, {
     Payment_Method: pay,
-    note,
   });
   toast('✓ 收款完成', 'success');
   currentInvoice = null;
