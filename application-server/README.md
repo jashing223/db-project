@@ -6,8 +6,8 @@ FastAPI backend for the pet hospital front-end (`front-end/common.js`). All path
 
 ```
 application-server/
-├── main.py              # FastAPI app entry point + CORS
-├── db.py                # PyMySQL connection (reads .env)
+├── main.py              # FastAPI app entry point + CORS + pool lifespan
+├── db.py                # PyMySQL connection pool (DBUtils; reads .env)
 ├── auth.py              # Demo JWT create/decode
 ├── dependencies.py      # get_db(), get_current_user()
 ├── permissions.py       # require_roles() RBAC dependencies
@@ -46,7 +46,7 @@ application-server/
    cp .env.example .env
    ```
 
-2. Fill in `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, and optionally `AUTH_SECRET` in `.env`.
+2. Fill in `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, and optionally `AUTH_SECRET` in `.env`. Optional pool tuning: `DB_POOL_MAX` (default `10`), `DB_POOL_MIN` (default `1`), `DB_POOL_MAX_IDLE` (default `5`).
 
 3. Install dependencies:
 
@@ -67,6 +67,18 @@ application-server/
    ```bash
    mysql -u ... -p ... < database/gen_mock_data.sql
    ```
+
+## Connection pool
+
+MySQL connections are pooled via [DBUtils](https://pypi.org/project/DBUtils/) (`PooledDB` in `db.py`). The pool is initialized when the FastAPI app starts and closed on shutdown. Each request borrows a connection from the pool through `get_db()` and returns it after commit/rollback.
+
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `DB_POOL_MAX` | `10` | Maximum connections in the pool |
+| `DB_POOL_MIN` | `1` | Minimum idle connections kept warm |
+| `DB_POOL_MAX_IDLE` | `5` | Maximum idle connections cached |
+
+With multiple uvicorn workers, each worker maintains its own pool (total MySQL connections ≈ `workers × DB_POOL_MAX`).
 
 ## Authentication (demo JWT)
 
@@ -111,7 +123,7 @@ sequenceDiagram
 | `Role_Level` | Name | Primary modules |
 |---:|---|---|
 | 1 | 櫃檯行政 | 掛號、飼主、帳單收款 |
-| 2 | 護理人員 | 病歷協助（medical write，不可 lock） |
+| 2 | 護理人員 | 病歷協助（medical write、**lock 病歷**） |
 | 3 | 獸醫師 | 病歷/處方、catalog 讀取、**lock 病歷** |
 | 4 | 經理 | 目錄定價、管理；可 draft 病歷但不可 lock |
 
@@ -150,11 +162,11 @@ Business routes — allowed `Role_Level` values per endpoint:
 | POST | `/records/{id}/details` | | ✓ | ✓ | ✓ |
 | DELETE | `/records/{id}/details/{detail_id}` | | ✓ | ✓ | ✓ |
 | PATCH | `/records/{id}/draft` | | ✓ | ✓ | ✓ |
-| PATCH | `/records/{id}/lock` | | | ✓ | |
+| PATCH | `/records/{id}/lock` | | ✓ | ✓ | |
 | GET | `/invoices/pending` | ✓ | ✓ | ✓ | ✓ |
 | PATCH | `/invoices/{id}/pay` | ✓ | | | ✓ |
 
-Sensitive routes (called out in `TODO.md`): anonymize (1, 4), catalog pricing (4), record lock (3 only), invoice pay (1, 4).
+Sensitive routes (called out in `TODO.md`): anonymize (1, 4), catalog pricing (4), record lock (2, 3), invoice pay (1, 4).
 
 Enforcement is in `permissions.py` via `require_roles()` on each router handler.
 
