@@ -41,21 +41,57 @@ def db_conn():
         yield conn
 
 
-@pytest.fixture
-def test_doctor(db_conn) -> int:
+def insert_staff(db_conn, role_level: int, *, as_doctor: bool = False) -> int:
     suffix = uuid.uuid4().hex[:8]
     with db_conn.cursor() as cur:
         cur.execute(
-            "INSERT INTO Staff (Staff_Name, Role_Level, Status_Active) VALUES (%s, 3, TRUE)",
-            (f"Conformance Doctor {suffix}",),
+            "INSERT INTO Staff (Staff_Name, Role_Level, Status_Active) VALUES (%s, %s, TRUE)",
+            (f"Test Staff {suffix}", role_level),
         )
         staff_id = cur.lastrowid
-        cur.execute(
-            "INSERT INTO Doctors (Staff_ID, License_Number, Specialty) VALUES (%s, %s, %s)",
-            (staff_id, f"LIC-{suffix}", "General"),
-        )
+        if as_doctor or role_level == 3:
+            cur.execute(
+                "INSERT INTO Doctors (Staff_ID, License_Number, Specialty) VALUES (%s, %s, %s)",
+                (staff_id, f"LIC-{suffix}", "Test"),
+            )
     db_conn.commit()
     return staff_id
+
+
+def login_headers(client: TestClient, staff_id: int) -> dict[str, str]:
+    response = client.post("/auth/login", json={"Staff_ID": staff_id})
+    assert response.status_code == 200, response.text
+    token = response.json()["access_token"]
+    return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.fixture
+def reception_headers(client, db_conn) -> dict[str, str]:
+    staff_id = insert_staff(db_conn, 1)
+    return login_headers(client, staff_id)
+
+
+@pytest.fixture
+def nurse_headers(client, db_conn) -> dict[str, str]:
+    staff_id = insert_staff(db_conn, 2)
+    return login_headers(client, staff_id)
+
+
+@pytest.fixture
+def vet_headers(client, db_conn) -> dict[str, str]:
+    staff_id = insert_staff(db_conn, 3, as_doctor=True)
+    return login_headers(client, staff_id)
+
+
+@pytest.fixture
+def manager_headers(client, db_conn) -> dict[str, str]:
+    staff_id = insert_staff(db_conn, 4)
+    return login_headers(client, staff_id)
+
+
+@pytest.fixture
+def test_doctor(db_conn) -> int:
+    return insert_staff(db_conn, 3, as_doctor=True)
 
 
 def assert_string_detail(response) -> str:
