@@ -2,6 +2,7 @@ from fastapi import APIRouter
 
 from . import (
     appointments,
+    auth,
     catalog,
     doctors,
     invoices,
@@ -13,6 +14,7 @@ from . import (
 
 api_router = APIRouter()
 
+api_router.include_router(auth.router)
 api_router.include_router(owners.router)
 api_router.include_router(pets.router)
 api_router.include_router(doctors.router)
