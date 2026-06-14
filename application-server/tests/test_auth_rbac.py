@@ -116,15 +116,15 @@ def _create_record_for_lock(client, test_doctor, reception_headers, medical_head
     return record["Record_ID"]
 
 
-def test_role2_cannot_lock_record(client, reception_headers, nurse_headers, vet_headers, test_doctor):
+def test_role2_can_lock_record(client, reception_headers, nurse_headers, vet_headers, test_doctor):
     record_id = _create_record_for_lock(client, test_doctor, reception_headers, nurse_headers)
     response = client.patch(
         f"/records/{record_id}/lock",
         json={"Clinical_Notes": "test", "Final_Diagnosis": "test", "Record_Locked": True},
         headers=nurse_headers,
     )
-    assert response.status_code == 403
-    assert_string_detail(response)
+    assert response.status_code == 200
+    assert response.json()["Record_Locked"] is True
 
 
 def test_role4_cannot_lock_record(client, reception_headers, manager_headers, vet_headers, test_doctor):

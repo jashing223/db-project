@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from dependencies import get_db
 from errors import not_found, raise_http_from_db_error
 from helpers import verify_drug_stock_for_detail, verify_drug_stock_for_record
-from permissions import MEDICAL_WRITE, VET_ONLY, require_roles
+from permissions import MEDICAL_WRITE, RECORD_LOCK, require_roles
 from schemas.records import DetailCreate, RecordCreate, RecordDraft, RecordLock
 from serialize import serialize_row
 
@@ -199,7 +199,7 @@ def save_draft(
 def lock_record(
     record_id: int,
     body: RecordLock,
-    _user=Depends(require_roles(*VET_ONLY)),
+    _user=Depends(require_roles(*RECORD_LOCK)),
     conn=Depends(get_db),
 ) -> dict:
     try:
