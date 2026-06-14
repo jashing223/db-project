@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Generator
 
 import pytest
 from fastapi.testclient import TestClient
@@ -31,8 +32,9 @@ requires_db = pytest.mark.skipif(
 
 
 @pytest.fixture
-def client() -> TestClient:
-    return TestClient(app)
+def client() -> Generator[TestClient, None, None]:
+    with TestClient(app) as test_client:
+        yield test_client
 
 
 @pytest.fixture

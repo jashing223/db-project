@@ -9,9 +9,12 @@ from typing import Generator
 
 import pymysql
 import pymysql.cursors
+from dbutils.pooled_db import PooledDB
 
 APP_DIR = Path(__file__).resolve().parent
 ENV_PATH = APP_DIR / ".env"
+
+_pool: PooledDB | None = None
 
 
 def load_env(path: Path = ENV_PATH) -> dict[str, str]:
@@ -38,11 +41,31 @@ def _db_settings() -> dict:
     }
 
 
-@contextmanager
-def get_connection() -> Generator[pymysql.connections.Connection, None, None]:
-    """Yield a PyMySQL connection with DictCursor; commit on success, rollback on error."""
+def _pool_settings() -> dict[str, int]:
+    env = load_env()
+    return {
+        "maxconnections": int(env.get("DB_POOL_MAX") or os.environ.get("DB_POOL_MAX", "10")),
+        "mincached": int(env.get("DB_POOL_MIN") or os.environ.get("DB_POOL_MIN", "1")),
+        "maxcached": int(env.get("DB_POOL_MAX_IDLE") or os.environ.get("DB_POOL_MAX_IDLE", "5")),
+    }
+
+
+def init_pool() -> PooledDB:
+    """Create the connection pool if it does not exist yet."""
+    global _pool
+    if _pool is not None:
+        return _pool
+
     settings = _db_settings()
-    conn = pymysql.connect(
+    pool_settings = _pool_settings()
+    _pool = PooledDB(
+        creator=pymysql,
+        maxconnections=pool_settings["maxconnections"],
+        mincached=pool_settings["mincached"],
+        maxcached=pool_settings["maxcached"],
+        maxshared=0,
+        blocking=True,
+        ping=1,
         host=settings["host"],
         port=settings["port"],
         user=settings["user"],
@@ -52,6 +75,22 @@ def get_connection() -> Generator[pymysql.connections.Connection, None, None]:
         cursorclass=pymysql.cursors.DictCursor,
         autocommit=False,
     )
+    return _pool
+
+
+def close_pool() -> None:
+    """Drain and close the connection pool."""
+    global _pool
+    if _pool is not None:
+        _pool.close()
+        _pool = None
+
+
+@contextmanager
+def get_connection() -> Generator[pymysql.connections.Connection, None, None]:
+    """Yield a pooled PyMySQL connection; commit on success, rollback on error."""
+    pool = init_pool()
+    conn = pool.connection()
     try:
         yield conn
         conn.commit()
