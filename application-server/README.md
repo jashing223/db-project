@@ -8,7 +8,9 @@ FastAPI backend for the pet hospital front-end (`front-end/common.js`). All path
 application-server/
 ├── main.py              # FastAPI app entry point + CORS
 ├── db.py                # PyMySQL connection (reads .env)
-├── dependencies.py      # get_db() for route Depends()
+├── auth.py              # Demo JWT create/decode
+├── dependencies.py      # get_db(), get_current_user()
+├── permissions.py       # require_roles() RBAC dependencies
 ├── errors.py            # MySQL exceptions → HTTP status codes
 ├── serialize.py         # Decimal / datetime / boolean → JSON-friendly values
 ├── helpers.py           # Appointment enrichment queries + slot constants
@@ -23,7 +25,8 @@ application-server/
 │   ├── catalog.py
 │   ├── records.py
 │   └── invoices.py
-└── routers/             # 23 spec API endpoints
+└── routers/             # 23 business endpoints + auth
+    ├── auth.py
     ├── owners.py
     ├── pets.py
     ├── doctors.py
@@ -43,7 +46,7 @@ application-server/
    cp .env.example .env
    ```
 
-2. Fill in `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME` in `.env`.
+2. Fill in `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, and optionally `AUTH_SECRET` in `.env`.
 
 3. Install dependencies:
 
@@ -59,6 +62,102 @@ application-server/
 
 5. Ensure the database schema is loaded from `database/` (`tables.DDL`, `views.DDL`, `triggers.DDL`).
 
+6. Load demo staff for login (idempotent):
+
+   ```bash
+   mysql -u ... -p ... < database/gen_mock_data.sql
+   ```
+
+## Authentication (demo JWT)
+
+Login accepts `{ "Staff_ID": N }` only — **no password**. 
+
+1. `GET /staff` — public staff picker for login UI
+2. `POST /auth/login` — returns JWT + user profile
+3. All business routes require `Authorization: Bearer <token>`
+
+### Auth flow
+
+```mermaid
+sequenceDiagram
+    participant FE as FrontEnd
+    participant API as FastAPI
+    participant DB as MySQL
+
+    FE->>API: GET /staff
+    API->>DB: SELECT active Staff + Doctors.Specialty
+    DB-->>API: staff rows
+    API-->>FE: staff list for login UI
+
+    FE->>API: POST /auth/login { Staff_ID }
+    API->>DB: verify Staff exists and Status_Active
+    DB-->>API: Staff_ID, Role_Level, Staff_Name
+    API-->>FE: { access_token, user }
+
+    FE->>API: GET /owners + Authorization Bearer token
+    API->>API: decode JWT, check role matrix
+    API->>DB: query
+    DB-->>API: rows
+    API-->>FE: JSON response
+```
+
+| HTTP | Meaning |
+|------|---------|
+| 401 | Missing or invalid token |
+| 403 | Valid token but insufficient role |
+
+### Role levels
+
+| `Role_Level` | Name | Primary modules |
+|---:|---|---|
+| 1 | 櫃檯行政 | 掛號、飼主、帳單收款 |
+| 2 | 護理人員 | 病歷協助（medical write，不可 lock） |
+| 3 | 獸醫師 | 病歷/處方、catalog 讀取、**lock 病歷** |
+| 4 | 經理 | 目錄定價、管理；可 draft 病歷但不可 lock |
+
+Roles 2 and 3 have **read-only** access to owner/pet mutations and invoice payment (GET allowed; POST/PATCH on those resources returns 403).
+
+### Role matrix (complete)
+
+Public routes (no token):
+
+| Method | Path | Allowed |
+|--------|------|---------|
+| GET | `/staff` | Anyone |
+| POST | `/auth/login` | Anyone |
+
+Business routes — allowed `Role_Level` values per endpoint:
+
+| Method | Path | 1 櫃檯 | 2 護理 | 3 獸醫 | 4 經理 |
+|--------|------|:--:|:--:|:--:|:--:|
+| GET | `/owners` | ✓ | ✓ | ✓ | ✓ |
+| POST | `/owners` | ✓ | | | ✓ |
+| PATCH | `/owners/{id}` | ✓ | | | ✓ |
+| PATCH | `/owners/{id}/anonymize` | ✓ | | | ✓ |
+| GET | `/pets?owner_id=` | ✓ | ✓ | ✓ | ✓ |
+| POST | `/pets` | ✓ | | | ✓ |
+| PATCH | `/pets/{id}` | ✓ | | | ✓ |
+| GET | `/doctors` | ✓ | ✓ | ✓ | ✓ |
+| GET | `/schedule?doctor_id=&date=` | ✓ | ✓ | ✓ | ✓ |
+| POST | `/appointments` | ✓ | | | ✓ |
+| GET | `/appointments/today` | ✓ | ✓ | ✓ | ✓ |
+| GET | `/appointments?doctor_id=&date=` | ✓ | ✓ | ✓ | ✓ |
+| PATCH | `/appointments/{id}/cancel` | ✓ | | | ✓ |
+| GET | `/catalog` | ✓ | ✓ | ✓ | ✓ |
+| GET | `/catalog/all` | | | | ✓ |
+| PATCH | `/catalog/{id}` | | | | ✓ |
+| POST | `/records` | | ✓ | ✓ | ✓ |
+| POST | `/records/{id}/details` | | ✓ | ✓ | ✓ |
+| DELETE | `/records/{id}/details/{detail_id}` | | ✓ | ✓ | ✓ |
+| PATCH | `/records/{id}/draft` | | ✓ | ✓ | ✓ |
+| PATCH | `/records/{id}/lock` | | | ✓ | |
+| GET | `/invoices/pending` | ✓ | ✓ | ✓ | ✓ |
+| PATCH | `/invoices/{id}/pay` | ✓ | | | ✓ |
+
+Sensitive routes (called out in `TODO.md`): anonymize (1, 4), catalog pricing (4), record lock (3 only), invoice pay (1, 4).
+
+Enforcement is in `permissions.py` via `require_roles()` on each router handler.
+
 ## Test
 
 The conformance tests use `pytest` and FastAPI's in-process `TestClient` (which depends on `httpx`). They require a configured, reachable MySQL database with the schema loaded.
@@ -66,12 +165,12 @@ The conformance tests use `pytest` and FastAPI's in-process `TestClient` (which 
 ```bash
 source .venv/bin/activate
 python check_connection.py
-python -m pytest tests/test_api_conformance.py -v
+python -m pytest tests/ -v
 ```
 
 `check_connection.py` validates configuration, connectivity, core tables, and required views. The tests reuse the same readiness check via `db_readiness()` and skip only when the database is not ready.
 
-When all 13 conformance tests pass, the implementation matches the 23 routes defined in `api_spec.md`.
+When conformance + RBAC tests pass, the implementation matches `api_spec.md` including auth.
 
 ## Run
 
@@ -94,7 +193,16 @@ const USE_MOCK   = false;
 
 Serve the HTML pages from any static file server or open them locally; CORS is enabled for all origins.
 
-## API endpoints (23)
+## API endpoints
+
+### Auth (public)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/staff` | Demo staff picker for login |
+| POST | `/auth/login` | Demo login by `Staff_ID` → JWT |
+
+### Business (requires Bearer token)
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -131,7 +239,7 @@ Serve the HTML pages from any static file server or open them locally; CORS is e
 - **Decimals:** `Current_Price`, `Total_Billed`, `Historical_Price` returned as JSON numbers.
 - **Booleans:** Known MySQL boolean columns are returned as JSON `true` / `false`.
 - **PATCH bodies:** Partial PATCH routes update only fields present in the request body.
-- **Auth:** None — the front-end uses localStorage session only.
+- **Auth:** Demo JWT via `POST /auth/login`; send `Authorization: Bearer <token>` on all business routes.
 
 ### Owner list response
 
@@ -267,6 +375,8 @@ Rules handled in **application code**:
 | Condition | HTTP |
 |-----------|------|
 | Request validation error | 422 |
+| Missing / invalid token | 401 |
+| Insufficient role | 403 |
 | Resource not found | 404 |
 | Trigger rejection (locked record, etc.) | 400 |
 | Duplicate phone / slot conflict | 409 |
