@@ -312,7 +312,7 @@ hr { border: none; border-top: 1px solid #e5e7eb; margin: 10px 0; }
 
         <div class="btn-row">
           <button onclick="saveDraft()">儲存草稿</button>
-          <button class="btn-danger" onclick="lockRecord()">🔒 完成看診</button>
+          <button class="btn-danger" id="btn-lock-hospital" onclick="lockRecord()" style="display:none">🔒 完成看診</button>
         </div>
       </div>
     </div>
@@ -470,9 +470,17 @@ function calcAge(birth) {
 ═══════════════════════════════════════════════════ */
 async function api(method, path, body) {
   if (USE_MOCK) return mockApi(method, path, body);
+  const headers = { 'Content-Type': 'application/json' };
+  try {
+    const s = localStorage.getItem('pet_hospital_session');
+    if (s) {
+      const u = JSON.parse(s);
+      if (u.access_token) headers['Authorization'] = `Bearer ${u.access_token}`;
+    }
+  } catch(e) {}
   const r = await fetch(API_BASE + path, {
     method,
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: body ? JSON.stringify(body) : undefined,
   });
   if (!r.ok) throw new Error(await r.text());
@@ -489,6 +497,12 @@ function mockApi(method, path, body) {
 
 let nextId = 100;
 function mockRoute(method, path, body) {
+  if (method === 'GET' && path === '/owners') {
+    return MOCK.owners.filter(o => !o.Is_Anonymized).map(o => ({
+      ...o,
+      pets: MOCK.pets.filter(p => p.Owner_ID === o.Owner_ID),
+    }));
+  }
   if (path.startsWith('/owners/search')) {
     const q = new URL('http://x'+path).searchParams.get('q') || '';
     return MOCK.owners.filter(o =>
@@ -632,12 +646,28 @@ function navigate(page) {
 ═══════════════════════════════════════════════════ */
 let apptState = { owner: null, pet: null, doctor_id: null, time: null };
 
+let _hospitalOwnersCache = null;
+
+async function hospitalFetchOwners(force = false) {
+  if (!force && _hospitalOwnersCache) return _hospitalOwnersCache;
+  _hospitalOwnersCache = await api('GET', '/owners');
+  return _hospitalOwnersCache;
+}
+
+function hospitalFilterOwners(owners, q) {
+  if (!q || !q.trim()) return owners;
+  return owners.filter(o =>
+    (o.Full_Name || o.name || '').includes(q) ||
+    (o.Phone_Number || o.phone || '').includes(q)
+  );
+}
+
 async function searchOwner(q) {
   if (!q || q.trim().length < 1) {
     document.getElementById('owner-results').innerHTML = '';
     return;
   }
-  const owners = await api('GET', `/owners/search?q=${encodeURIComponent(q)}`);
+  const owners = hospitalFilterOwners(await hospitalFetchOwners(), q);
   const el = document.getElementById('owner-results');
   if (!owners.length) {
     el.innerHTML = '<div style="font-size:12px;color:#9ca3af;padding:4px 0;">找不到飼主</div>';
@@ -645,21 +675,27 @@ async function searchOwner(q) {
   }
   el.innerHTML = '<table>' +
     '<thead><tr><th>姓名</th><th>電話</th><th></th></tr></thead><tbody>' +
-    owners.map(o => `
+    owners.map(o => {
+      const id = o.Owner_ID || o.owner_id;
+      const name = o.Full_Name || o.name;
+      const phone = o.Phone_Number || o.phone;
+      return `
       <tr>
-        <td>${o.name}</td>
-        <td>${o.phone}</td>
-        <td><button class="btn-sm btn-primary" onclick="selectOwner(${o.owner_id})">選擇</button></td>
-      </tr>`).join('') +
+        <td>${name}</td>
+        <td>${phone}</td>
+        <td><button class="btn-sm btn-primary" onclick="selectOwner(${id})">選擇</button></td>
+      </tr>`;
+    }).join('') +
     '</tbody></table>';
 }
 
 async function selectOwner(id) {
-  const owners = await api('GET', `/owners/search?q=`);
-  // We'll just get from mock directly for simplicity
-  apptState.owner = MOCK.owners.find(o => o.owner_id === id) || { owner_id: id };
+  const owners = await hospitalFetchOwners();
+  apptState.owner = owners.find(o => (o.Owner_ID || o.owner_id) === id) || { Owner_ID: id, owner_id: id };
+  const name = apptState.owner.Full_Name || apptState.owner.name || '';
+  const phone = apptState.owner.Phone_Number || apptState.owner.phone || '';
   document.getElementById('owner-results').innerHTML =
-    `<div class="pet-chip">✓ ${apptState.owner.name}　${apptState.owner.phone}</div>`;
+    `<div class="pet-chip">✓ ${name}　${phone}</div>`;
 
   const pets = await api('GET', `/pets?owner_id=${id}`);
   const sel = document.getElementById('pet-select');
@@ -951,6 +987,15 @@ async function confirmPayment() {
 ═══════════════════════════════════════════════════ */
 document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('topbar-date').textContent = today();
+  try {
+    const s = localStorage.getItem('pet_hospital_session');
+    if (s) {
+      const u = JSON.parse(s);
+      if (u.Role_Level === 3) {
+        document.getElementById('btn-lock-hospital').style.display = '';
+      }
+    }
+  } catch(e) {}
 });
 </script>
 </body>

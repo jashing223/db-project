@@ -3,7 +3,7 @@
    將 USE_MOCK 改為 false 並設定 API_BASE 即可接真實後端
 ═══════════════════════════════════════════════════════ */
 const API_BASE    = 'http://localhost:8000';
-const USE_MOCK    = true;
+const USE_MOCK    = false;
 const STORAGE_KEY = 'pet_hospital_mock_v1';
 const SESSION_KEY = 'pet_hospital_session';
 
@@ -124,23 +124,64 @@ function getCurrentUser() {
     const s = localStorage.getItem(SESSION_KEY);
     if (s) {
       const u = JSON.parse(s);
-      // 確保 staff 還存在（可能被刪除）
-      if (MOCK.staff.find(m => m.Staff_ID === u.Staff_ID)) return u;
+      if (USE_MOCK) {
+        if (MOCK.staff.find(m => m.Staff_ID === u.Staff_ID)) return u;
+      } else if (u.access_token) {
+        return u;
+      }
     }
   } catch(e) {}
   return null; // 未登入
 }
 
-function login(staffId) {
-  const u = MOCK.staff.find(s => s.Staff_ID === Number(staffId));
-  if (!u) return;
-  localStorage.setItem(SESSION_KEY, JSON.stringify(u));
-  location.href = 'appointment.html';
+async function login(staffId) {
+  if (USE_MOCK) {
+    const u = MOCK.staff.find(s => s.Staff_ID === Number(staffId));
+    if (!u) return;
+    localStorage.setItem(SESSION_KEY, JSON.stringify(u));
+    location.href = ROLE_HOME[u.Role_Level] || 'appointment.html';
+    return;
+  }
+  const r = await fetch(API_BASE + '/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ Staff_ID: Number(staffId) }),
+  });
+  if (!r.ok) throw new Error(await r.text());
+  const data = await r.json();
+  const session = { ...data.user, access_token: data.access_token };
+  localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+  location.href = ROLE_HOME[session.Role_Level] || 'appointment.html';
 }
 
 function logout() {
   localStorage.removeItem(SESSION_KEY);
   location.href = 'login.html';
+}
+
+/* ── Owners cache (GET /owners + client filter) ── */
+let _ownersCache = null;
+
+async function fetchOwners(force = false) {
+  if (!force && _ownersCache) return _ownersCache;
+  _ownersCache = await api('GET', '/owners');
+  return _ownersCache;
+}
+
+function filterOwners(owners, q) {
+  if (!q || !q.trim()) return owners;
+  return owners.filter(o =>
+    !o.Is_Anonymized &&
+    (o.Full_Name.includes(q) || (o.Phone_Number && o.Phone_Number.includes(q)))
+  );
+}
+
+async function searchOwners(q) {
+  return filterOwners(await fetchOwners(), q);
+}
+
+function invalidateOwnersCache() {
+  _ownersCache = null;
 }
 
 /* ── 固定 busy slots ── */
@@ -157,9 +198,12 @@ async function api(method, path, body) {
       }, 60)
     );
   }
+  const headers = { 'Content-Type': 'application/json' };
+  const u = getCurrentUser();
+  if (u?.access_token) headers['Authorization'] = `Bearer ${u.access_token}`;
   const r = await fetch(API_BASE + path, {
     method,
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: body ? JSON.stringify(body) : undefined,
   });
   if (!r.ok) throw new Error(await r.text());
@@ -171,6 +215,14 @@ function mockRoute(method, path, body) {
   const url = new URL('http://x' + path);
 
   // ── 飼主 ──
+  if (method === 'GET' && path === '/owners') {
+    return MOCK.owners.filter(o => !o.Is_Anonymized).map(o => ({
+      ...o,
+      pets: MOCK.pets
+        .filter(p => p.Owner_ID === o.Owner_ID)
+        .map(p => ({ ...p, Age: calcAgeYears(p.Birth_Date) })),
+    }));
+  }
   if (path.startsWith('/owners/search')) {
     const q = url.searchParams.get('q') || '';
     return MOCK.owners.filter(o =>
@@ -179,18 +231,18 @@ function mockRoute(method, path, body) {
   }
   if (method === 'POST' && path === '/owners') {
     const o = { Owner_ID: _nextId++, Is_Anonymized: false, ...body };
-    MOCK.owners.push(o); saveMock(); return o;
+    MOCK.owners.push(o); saveMock(); invalidateOwnersCache(); return o;
   }
   if (method === 'PATCH' && path.match(/^\/owners\/\d+$/) && !path.includes('/anonymize')) {
     const o = MOCK.owners.find(o => o.Owner_ID === parseInt(path.split('/')[2]));
     if (!o) throw new Error('飼主不存在');
-    Object.assign(o, body); saveMock(); return o;
+    Object.assign(o, body); saveMock(); invalidateOwnersCache(); return o;
   }
   if (method === 'PATCH' && path.includes('/anonymize')) {
     const o = MOCK.owners.find(o => o.Owner_ID === parseInt(path.split('/')[2]));
     if (!o) throw new Error('飼主不存在');
     Object.assign(o, { Full_Name: 'Deleted User', Phone_Number: `deleted-${o.Owner_ID}-${Date.now()}`, Email_Address: null, Physical_Address: null, Is_Anonymized: true });
-    saveMock(); return o;
+    saveMock(); invalidateOwnersCache(); return o;
   }
 
   // ── 寵物 ──

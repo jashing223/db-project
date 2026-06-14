@@ -142,7 +142,7 @@ hr{border:none;border-top:1px solid #e5e7eb;margin:10px 0}
       <div class="btn-row">
         <button onclick="cancelVisit()">← 返回列表</button>
         <button onclick="saveDraft()">儲存草稿</button>
-        <button class="btn-danger" onclick="lockRecord()">🔒 完成看診</button>
+        <button class="btn-danger" id="btn-lock" onclick="lockRecord()" style="display:none">🔒 完成看診</button>
       </div>
     </div>
 
@@ -350,6 +350,13 @@ function cancelVisit() {
   document.getElementById('medical-form').style.display   = 'none';
   document.getElementById('appt-list-card').style.display = '';
 }
+
+(function initLockButton() {
+  const u = getCurrentUser();
+  if (u && u.Role_Level === 3) {
+    document.getElementById('btn-lock').style.display = '';
+  }
+})();
 </script>
 </body>
 </html>

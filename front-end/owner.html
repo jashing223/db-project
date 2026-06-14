@@ -160,13 +160,13 @@ let editOwner  = null;
 let addPetOwnerId = null;
 
 async function loadAll() {
-  const owners = await api('GET', '/owners/search?q=');
+  const owners = await fetchOwners(true);
   renderTable(owners);
 }
 
 async function doSearch(q) {
   if (!q.trim()) { document.getElementById('owner-table').innerHTML = '<span style="font-size:12px;color:#9ca3af">輸入關鍵字搜尋</span>'; return; }
-  const owners = await api('GET', `/owners/search?q=${encodeURIComponent(q)}`);
+  const owners = await searchOwners(q);
   renderTable(owners);
 }
 
@@ -176,7 +176,7 @@ function renderTable(owners) {
   el.innerHTML = `<table>
     <thead><tr><th>#</th><th>姓名</th><th>電話</th><th>寵物</th><th style="width:180px"></th></tr></thead>
     <tbody>${owners.map(o => {
-      const pets = MOCK.pets.filter(p => p.Owner_ID === o.Owner_ID);
+      const pets = o.pets || MOCK.pets.filter(p => p.Owner_ID === o.Owner_ID);
       return `<tr>
         <td style="color:#9ca3af">${o.Owner_ID}</td>
         <td>${o.Full_Name}</td>

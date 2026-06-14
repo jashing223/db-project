@@ -144,7 +144,7 @@ document.getElementById('topbar-date').textContent = todayStr();
 async function searchOwner(q) {
   const el = document.getElementById('owner-results');
   if (!q || !q.trim()) { el.innerHTML = ''; return; }
-  const owners = await api('GET', `/owners/search?q=${encodeURIComponent(q)}`);
+  const owners = await searchOwners(q);
   if (!owners.length) {
     el.innerHTML = '<div style="font-size:12px;color:#9ca3af;padding:4px 0">找不到飼主</div>';
     return;
@@ -161,7 +161,8 @@ async function searchOwner(q) {
 }
 
 async function selectOwner(id) {
-  state.owner = MOCK.owners.find(o => o.Owner_ID === id);
+  const owners = await fetchOwners();
+  state.owner = owners.find(o => o.Owner_ID === id);
   document.getElementById('owner-results').innerHTML =
     `<div class="pet-chip">✓ ${state.owner.Full_Name}　${state.owner.Phone_Number}</div>`;
 
