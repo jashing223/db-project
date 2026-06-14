@@ -141,8 +141,8 @@ hr{border:none;border-top:1px solid #e5e7eb;margin:10px 0}
 
       <div class="btn-row">
         <button onclick="cancelVisit()">← 返回列表</button>
-        <button onclick="saveDraft()">儲存草稿</button>
-        <button class="btn-danger" id="btn-lock" onclick="lockRecord()" style="display:none">🔒 完成看診</button>
+
+        <button class="btn-danger" onclick="lockRecord()">🔒 完成看診</button>
       </div>
     </div>
 
@@ -162,7 +162,7 @@ hr{border:none;border-top:1px solid #e5e7eb;margin:10px 0}
     <div class="form-grid" id="item-fields" style="display:none">
       <div class="field">
         <label id="qty-label">Numeric_Value（數量）</label>
-        <input type="number" id="item-qty" min="0.01" step="0.01" value="1" oninput="calcItemTotal()">
+        <input type="number" id="item-qty" min="1" step="1" value="1" oninput="calcItemTotal()">
       </div>
       <div class="field">
         <label>Historical_Price（由 Trigger 覆寫）</label>
@@ -181,9 +181,18 @@ hr{border:none;border-top:1px solid #e5e7eb;margin:10px 0}
 
 <script src="common.js"></script>
 <script>
-let mrState = { appt: null, Record_ID: null, details: [] };
+let mrState  = { appt: null, Record_ID: null, details: [] };
+let _catalog = [];
 
 document.getElementById('topbar-date').textContent = todayStr();
+
+// 完成看診（lock）只有 Role 3 獸醫師可用
+// 僅在明確取得 Role_Level 且非 3 時才隱藏，避免後端 field 名稱不符時誤判
+const _rl = getCurrentUser()?.Role_Level;
+if (_rl && _rl !== 3) {
+  document.querySelector('button[onclick="lockRecord()"]').style.display = 'none';
+}
+
 loadTodayAppts();
 
 async function loadTodayAppts() {
@@ -213,17 +222,11 @@ async function startVisit(apptId) {
   const appts = await api('GET', '/appointments/today');
   const a = appts.find(x => x.Appointment_ID === apptId);
   if (!a) return;
-  mrState.appt    = a;
-  mrState.details = [];
 
-  // POST /records → 建立 Medical_Records 並同步建立 Invoices
-  const rec = await api('POST', '/records', {
-    Appointment_ID:    a.Appointment_ID,
-    Consultation_Date: todayStr(),
-    Clinical_Notes:    null,
-    Final_Diagnosis:   null,
-  });
-  mrState.Record_ID = rec.Record_ID;
+  // 只設定狀態，不呼叫 POST /records（等完成看診時才建立）
+  mrState.appt      = a;
+  mrState.Record_ID = null;
+  mrState.details   = [];
 
   document.getElementById('mr-pet-info').textContent =
     `${a.pet?.Pet_Name}（${a.pet?.Species_Type}・${calcAge(a.pet?.Birth_Date)}・${a.pet?.Current_Weight} kg）`;
@@ -236,10 +239,10 @@ async function startVisit(apptId) {
   document.getElementById('medical-form').style.display   = '';
 
   // 載入 Catalog_Items（未下架）
-  const catalog = await api('GET', '/catalog');
+  _catalog = await api('GET', '/catalog');
   const sel = document.getElementById('item-select');
   sel.innerHTML = '<option value="">— 選擇 —</option>' +
-    catalog.map(c =>
+    _catalog.map(c =>
       `<option value="${c.Item_ID}">${c.Item_Name}（${categoryLabel(c.Item_Category)}）　$${c.Current_Price}</option>`
     ).join('');
 
@@ -255,7 +258,7 @@ function renderTdList() {
     return;
   }
   el.innerHTML = mrState.details.map(d => {
-    const item = MOCK.catalog.find(c => c.Item_ID === d.Item_ID);
+    const item = _catalog.find(c => c.Item_ID === d.Item_ID);
     return `<div class="td-row">
       <span class="badge badge-blue" style="font-size:11px">${categoryLabel(item?.Item_Category)}</span>
       <span class="td-name">${item?.Item_Name || ''}</span>
@@ -281,11 +284,11 @@ function closeModal() {
 
 function onItemSelect(id) {
   if (!id) { document.getElementById('item-fields').style.display = 'none'; return; }
-  const item = MOCK.catalog.find(c => c.Item_ID == id);
+  const item = _catalog.find(c => c.Item_ID == id);
   document.getElementById('item-price').value = '$' + item.Current_Price + '（trigger 覆寫）';
-  // Item_Category=2 (檢驗) 用「次數」，其他用「數量」
-  document.getElementById('qty-label').textContent =
-    item.Item_Category === 2 ? 'Numeric_Value（次數）' : 'Numeric_Value（數量）';
+  // qty label 依類別調整
+  const qtyLabels = { 1: 'Numeric_Value（數量）', 2: 'Numeric_Value（次數）', 3: 'Numeric_Value（數量）', 4: 'Numeric_Value（天數）' };
+  document.getElementById('qty-label').textContent = qtyLabels[item.Item_Category] || 'Numeric_Value（數量）';
   document.getElementById('item-fields').style.display = '';
   calcItemTotal();
 }
@@ -293,56 +296,87 @@ function onItemSelect(id) {
 function calcItemTotal() {
   const id  = document.getElementById('item-select').value;
   if (!id) return;
-  const item = MOCK.catalog.find(c => c.Item_ID == id);
+  const item = _catalog.find(c => c.Item_ID == id);
   const qty  = parseFloat(document.getElementById('item-qty').value) || 1;
   document.getElementById('item-total').textContent = `小計：$${(item.Current_Price * qty).toLocaleString()}`;
 }
 
-async function addItem() {
+function addItem() {
   const id = parseInt(document.getElementById('item-select').value);
   if (!id) return toast('請選擇項目', 'error');
   const qty = parseFloat(document.getElementById('item-qty').value) || 1;
 
-  // Historical_Price 傳 0，server 端 trigger (trg_td_before_insert) 會強制覆寫
-  const detail = await api('POST', `/records/${mrState.Record_ID}/details`, {
-    Item_ID:       id,
-    Numeric_Value: qty,
-    Historical_Price: 0,   // trigger 覆寫，前端傳任意值皆無效
+  // 庫存檢查（僅藥品 Item_Category=1 有 Stock_Quantity）
+  const item = _catalog.find(c => c.Item_ID === id);
+  if (item?.Item_Category === 1 && item.Stock_Quantity !== null && item.Stock_Quantity < qty) {
+    return toast(`庫存不足（剩餘 ${item.Stock_Quantity} 件）`, 'error');
+  }
+
+  // 暫存於 local state，完成看診時才送 API
+  mrState.details.push({
+    Detail_ID:        Date.now(),           // 暫時 local ID，送出後由後端分配
+    Item_ID:          id,
+    Numeric_Value:    qty,
+    Historical_Price: item.Current_Price,   // 顯示用；trigger 會在寫入時覆寫
     Polymorphic_Text1: null,
     Polymorphic_Text2: null,
   });
-  mrState.details.push(detail);
   renderTdList();
   closeModal();
   toast('已新增項目');
 }
 
-async function removeDetail(did) {
-  await api('DELETE', `/records/${mrState.Record_ID}/details/${did}`);
+function removeDetail(did) {
   mrState.details = mrState.details.filter(d => d.Detail_ID !== did);
   renderTdList();
 }
 
-async function saveDraft() {
-  // PATCH /records/:rid/draft
-  await api('PATCH', `/records/${mrState.Record_ID}/draft`, {
-    Clinical_Notes:  document.getElementById('mr-notes').value,
-    Final_Diagnosis: document.getElementById('mr-diagnosis').value,
-  });
-  toast('草稿已儲存');
-}
 
 async function lockRecord() {
   if (!mrState.details.length) return toast('請先新增至少一項治療項目', 'error');
-  // PATCH /records/:rid/lock → Record_Locked=TRUE → 後端觸發 trg_mr_after_update 扣庫存
+  const notes = document.getElementById('mr-notes').value;
+  const diag  = document.getElementById('mr-diagnosis').value;
+  if (!diag.trim()) return toast('請填寫最終診斷', 'error');
+
+  // 1. 建立病歷
+  let rec;
+  try {
+    rec = await api('POST', '/records', {
+      Appointment_ID:    mrState.appt.Appointment_ID,
+      Consultation_Date: todayStr(),
+      Clinical_Notes:    notes,
+      Final_Diagnosis:   diag,
+    });
+  } catch(e) {
+    return toast('建立病歷失敗：' + e.message, 'error');
+  }
+  // 兼容後端回傳 Record_ID 或 record_id
+  mrState.Record_ID = rec.Record_ID ?? rec.record_id;
+  console.log('[lockRecord] POST /records response:', rec, '→ Record_ID:', mrState.Record_ID);
+  if (!mrState.Record_ID) {
+    return toast('病歷建立成功但取不到 Record_ID，請開 console 確認後端回傳格式', 'error');
+  }
+
+  // 2. 逐筆送出治療明細
+  for (const d of mrState.details) {
+    await api('POST', `/records/${mrState.Record_ID}/details`, {
+      Item_ID:           d.Item_ID,
+      Numeric_Value:     d.Numeric_Value,
+      Historical_Price:  0,   // trigger 覆寫
+      Polymorphic_Text1: d.Polymorphic_Text1,
+      Polymorphic_Text2: d.Polymorphic_Text2,
+    });
+  }
+
+  // 3. 鎖定病歷 → trigger 扣庫存、帳單推送
   await api('PATCH', `/records/${mrState.Record_ID}/lock`, {
-    Clinical_Notes:  document.getElementById('mr-notes').value,
-    Final_Diagnosis: document.getElementById('mr-diagnosis').value,
+    Clinical_Notes:  notes,
+    Final_Diagnosis: diag,
     Record_Locked:   true,
   });
+
   toast('✓ 病歷已鎖定，庫存已扣減，帳單已建立', 'success');
-  cancelVisit();
-  loadTodayAppts();
+  setTimeout(() => { cancelVisit(); loadTodayAppts(); }, 800);
 }
 
 function cancelVisit() {
@@ -350,13 +384,6 @@ function cancelVisit() {
   document.getElementById('medical-form').style.display   = 'none';
   document.getElementById('appt-list-card').style.display = '';
 }
-
-(function initLockButton() {
-  const u = getCurrentUser();
-  if (u && u.Role_Level === 3) {
-    document.getElementById('btn-lock').style.display = '';
-  }
-})();
 </script>
 </body>
 </html>

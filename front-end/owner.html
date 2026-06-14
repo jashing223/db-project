@@ -155,19 +155,33 @@ hr{border:none;border-top:1px solid #e5e7eb;margin:14px 0}
 <div id="toast"></div>
 <script src="common.js"></script>
 <script>
-let modalMode  = 'add';   // 'add' | 'edit'
-let editOwner  = null;
+let modalMode     = 'add';   // 'add' | 'edit'
+let editOwner     = null;
 let addPetOwnerId = null;
+let _owners       = [];      // 一次載入，前端篩選
 
-async function loadAll() {
-  const owners = await fetchOwners(true);
-  renderTable(owners);
+async function refreshOwners() {
+  _owners = await api('GET', '/owners');
+  renderTable(_owners);
 }
 
-async function doSearch(q) {
-  if (!q.trim()) { document.getElementById('owner-table').innerHTML = '<span style="font-size:12px;color:#9ca3af">輸入關鍵字搜尋</span>'; return; }
-  const owners = await searchOwners(q);
-  renderTable(owners);
+function loadAll() {
+  document.getElementById('search-input').value = '';
+  renderTable(_owners);
+}
+
+function doSearch(q) {
+  if (!q.trim()) {
+    document.getElementById('owner-table').innerHTML =
+      '<span style="font-size:12px;color:#9ca3af">輸入關鍵字搜尋，或點「顯示全部」</span>';
+    return;
+  }
+  const q2 = q.toLowerCase();
+  const filtered = _owners.filter(o =>
+    o.Full_Name.toLowerCase().includes(q2) ||
+    (o.Phone_Number && o.Phone_Number.includes(q))
+  );
+  renderTable(filtered);
 }
 
 function renderTable(owners) {
@@ -176,7 +190,7 @@ function renderTable(owners) {
   el.innerHTML = `<table>
     <thead><tr><th>#</th><th>姓名</th><th>電話</th><th>寵物</th><th style="width:180px"></th></tr></thead>
     <tbody>${owners.map(o => {
-      const pets = o.pets || MOCK.pets.filter(p => p.Owner_ID === o.Owner_ID);
+      const pets = o.pets || [];
       return `<tr>
         <td style="color:#9ca3af">${o.Owner_ID}</td>
         <td>${o.Full_Name}</td>
@@ -204,7 +218,7 @@ function openAddModal() {
 
 function openEditModal(oid) {
   modalMode = 'edit';
-  editOwner = MOCK.owners.find(o => o.Owner_ID === oid);
+  editOwner = _owners.find(o => o.Owner_ID === oid);
   if (!editOwner) return;
   document.getElementById('modal-title').textContent = '編輯飼主資料';
   document.getElementById('pet-section').style.display = 'none';
@@ -225,10 +239,9 @@ async function confirmModal() {
   if (modalMode === 'add') {
     const owner = await api('POST', '/owners', {
       Full_Name, Phone_Number: Phone_Number || null,
-      Email_Address:   document.getElementById('f-email').value || null,
+      Email_Address:    document.getElementById('f-email').value || null,
       Physical_Address: document.getElementById('f-addr').value || null,
     });
-    // 有填寵物就一併新增
     const pName    = document.getElementById('p-name').value.trim();
     const pSpecies = document.getElementById('p-species').value.trim();
     if (pName && pSpecies) {
@@ -251,13 +264,13 @@ async function confirmModal() {
     toast('✓ 資料已更新', 'success');
   }
   closeModal();
-  loadAll();
+  refreshOwners();
 }
 
 // ── 新增寵物 Modal ──
 function openPetModal(oid) {
   addPetOwnerId = oid;
-  const owner = MOCK.owners.find(o => o.Owner_ID === oid);
+  const owner = _owners.find(o => o.Owner_ID === oid);
   document.getElementById('pm-owner-name').textContent = owner?.Full_Name || '';
   ['pm-name','pm-species','pm-breed','pm-birth'].forEach(id => document.getElementById(id).value = '');
   document.getElementById('pm-weight').value = '';
@@ -279,17 +292,19 @@ async function confirmAddPet() {
   });
   toast('✓ 寵物已新增', 'success');
   closePetModal();
-  loadAll();
+  refreshOwners();
 }
 
 // ── 匿名化 ──
 async function anonymize(oid) {
-  const owner = MOCK.owners.find(o => o.Owner_ID === oid);
+  const owner = _owners.find(o => o.Owner_ID === oid);
   if (!confirm(`確定要匿名化「${owner?.Full_Name}」的資料？此操作不可還原。`)) return;
   await api('PATCH', `/owners/${oid}/anonymize`);
   toast('✓ 已匿名化', 'success');
-  loadAll();
+  refreshOwners();
 }
+
+refreshOwners();
 </script>
 </body>
 </html>

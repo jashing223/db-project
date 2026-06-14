@@ -129,7 +129,8 @@ tr.discontinued td{opacity:.5}
 <div id="toast"></div>
 <script src="common.js"></script>
 <script>
-let editItemId = null;
+let editItemId  = null;
+let _allCatalog = [];
 
 document.getElementById('topbar-date').textContent = todayStr();
 
@@ -138,7 +139,8 @@ async function init() {
 }
 
 async function renderCatalog() {
-  const all        = await api('GET', '/catalog/all');
+  _allCatalog      = await api('GET', '/catalog/all');
+  const all        = _allCatalog;
   const filterCat  = document.getElementById('filter-cat').value;
   const showDisc   = document.getElementById('show-discontinued').checked;
   const threshold  = parseInt(document.getElementById('threshold').value) || 50;
@@ -213,7 +215,7 @@ async function confirmPrice() {
 }
 
 async function discontinue(id) {
-  const item = MOCK.catalog.find(c => c.Item_ID === id);
+  const item = _allCatalog.find(c => c.Item_ID === id);
   if (!confirm(`確定下架「${item?.Item_Name}」？`)) return;
   await api('PATCH', `/catalog/${id}`, { Is_Discontinued: true });
   toast('✓ 已下架', 'success');

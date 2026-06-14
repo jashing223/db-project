@@ -52,13 +52,14 @@ body{font-family:'Segoe UI','Noto Sans TC',sans-serif;background:#f4f6f9;color:#
 
 <script src="common.js"></script>
 <script>
+// 若已登入就直接跳轉
 const u = getCurrentUser();
-if (u) { location.href = ROLE_HOME[u.Role_Level] || 'appointment.html'; }
+if (u) { location.href = 'appointment.html'; }
 
 const AV_CHAR = { 1: '行', 2: '護', 3: '醫', 4: '理' };
 
-function renderStaffList(staff) {
-  document.getElementById('staff-list').innerHTML = staff.map(s => `
+function renderStaff(staffList) {
+  document.getElementById('staff-list').innerHTML = staffList.map(s => `
     <div class="staff-card" onclick="doLogin(${s.Staff_ID})">
       <div class="staff-avatar av-${s.Role_Level}">${AV_CHAR[s.Role_Level] || s.Staff_Name[0]}</div>
       <div class="staff-info">
@@ -71,30 +72,45 @@ function renderStaffList(staff) {
   `).join('');
 }
 
-async function loadStaffList() {
-  try {
-    if (USE_MOCK) {
-      renderStaffList(MOCK.staff);
-      return;
-    }
-    const r = await fetch(API_BASE + '/staff');
-    if (!r.ok) throw new Error(await r.text());
-    renderStaffList(await r.json());
-  } catch (e) {
-    document.getElementById('staff-list').innerHTML =
-      '<div style="font-size:12px;color:#ef4444;padding:8px 0">無法載入員工清單</div>';
-  }
-}
-
 async function doLogin(staffId) {
+  if (USE_MOCK) {
+    login(staffId);   // common.js 同步 mock 登入
+    return;
+  }
+  // 真實後端：POST /auth/login → 取得 JWT
   try {
-    await login(staffId);
-  } catch (e) {
-    alert('登入失敗：' + (e.message || e));
+    const r = await fetch(API_BASE + '/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ Staff_ID: staffId }),
+    });
+    if (!r.ok) { alert('登入失敗，請確認後端服務正在執行'); return; }
+    const data = await r.json();
+    // 後端回傳 { access_token, token_type, user: {...} } 或直接含 user 欄位
+    const token = data.access_token || data.token;
+    const profile = data.user || data;
+    saveSession(profile, token);
+    location.href = 'appointment.html';
+  } catch(e) {
+    alert('無法連線至後端：' + e.message);
   }
 }
 
-loadStaffList();
+// 載入員工清單
+(async () => {
+  if (USE_MOCK) {
+    renderStaff(MOCK.staff);
+  } else {
+    try {
+      const r = await fetch(API_BASE + '/staff');
+      const staffList = await r.json();
+      renderStaff(staffList);
+    } catch(e) {
+      document.getElementById('staff-list').innerHTML =
+        '<div style="font-size:12px;color:#ef4444;padding:8px 0">無法載入員工清單，請確認後端服務正在執行</div>';
+    }
+  }
+})();
 </script>
 </body>
 </html>
