@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from dependencies import get_db
 from errors import not_found, raise_http_from_db_error
 from helpers import verify_drug_stock_for_detail, verify_drug_stock_for_record
+from permissions import MEDICAL_WRITE, VET_ONLY, require_roles
 from schemas.records import DetailCreate, RecordCreate, RecordDraft, RecordLock
 from serialize import serialize_row
 
@@ -42,7 +43,11 @@ def _fetch_record(cur, record_id: int, with_details: bool = False) -> dict | Non
 
 
 @router.post("/records", status_code=201)
-def create_record(body: RecordCreate, conn=Depends(get_db)) -> dict:
+def create_record(
+    body: RecordCreate,
+    _user=Depends(require_roles(*MEDICAL_WRITE)),
+    conn=Depends(get_db),
+) -> dict:
     try:
         with conn.cursor() as cur:
             cur.execute(
@@ -89,7 +94,12 @@ def create_record(body: RecordCreate, conn=Depends(get_db)) -> dict:
 
 
 @router.post("/records/{record_id}/details", status_code=201)
-def add_detail(record_id: int, body: DetailCreate, conn=Depends(get_db)) -> dict:
+def add_detail(
+    record_id: int,
+    body: DetailCreate,
+    _user=Depends(require_roles(*MEDICAL_WRITE)),
+    conn=Depends(get_db),
+) -> dict:
     try:
         with conn.cursor() as cur:
             cur.execute("SELECT Record_ID FROM Medical_Records WHERE Record_ID = %s", (record_id,))
@@ -124,7 +134,12 @@ def add_detail(record_id: int, body: DetailCreate, conn=Depends(get_db)) -> dict
 
 
 @router.delete("/records/{record_id}/details/{detail_id}")
-def delete_detail(record_id: int, detail_id: int, conn=Depends(get_db)) -> dict:
+def delete_detail(
+    record_id: int,
+    detail_id: int,
+    _user=Depends(require_roles(*MEDICAL_WRITE)),
+    conn=Depends(get_db),
+) -> dict:
     try:
         with conn.cursor() as cur:
             cur.execute(
@@ -150,7 +165,12 @@ def delete_detail(record_id: int, detail_id: int, conn=Depends(get_db)) -> dict:
 
 
 @router.patch("/records/{record_id}/draft")
-def save_draft(record_id: int, body: RecordDraft, conn=Depends(get_db)) -> dict:
+def save_draft(
+    record_id: int,
+    body: RecordDraft,
+    _user=Depends(require_roles(*MEDICAL_WRITE)),
+    conn=Depends(get_db),
+) -> dict:
     try:
         with conn.cursor() as cur:
             cur.execute("SELECT Record_ID FROM Medical_Records WHERE Record_ID = %s", (record_id,))
@@ -176,7 +196,12 @@ def save_draft(record_id: int, body: RecordDraft, conn=Depends(get_db)) -> dict:
 
 
 @router.patch("/records/{record_id}/lock")
-def lock_record(record_id: int, body: RecordLock, conn=Depends(get_db)) -> dict:
+def lock_record(
+    record_id: int,
+    body: RecordLock,
+    _user=Depends(require_roles(*VET_ONLY)),
+    conn=Depends(get_db),
+) -> dict:
     try:
         with conn.cursor() as cur:
             cur.execute(

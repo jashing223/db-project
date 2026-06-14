@@ -5,12 +5,18 @@ from fastapi import APIRouter, Depends
 from dependencies import get_db
 from errors import raise_http_from_db_error
 from helpers import ALL_SLOTS, BUSY_SLOTS
+from permissions import READ_ALL, require_roles
 
 router = APIRouter(tags=["schedule"])
 
 
 @router.get("/schedule")
-def get_schedule(doctor_id: int, date: str, conn=Depends(get_db)) -> list[dict]:
+def get_schedule(
+    doctor_id: int,
+    date: str,
+    _user=Depends(require_roles(*READ_ALL)),
+    conn=Depends(get_db),
+) -> list[dict]:
     try:
         with conn.cursor() as cur:
             cur.execute(

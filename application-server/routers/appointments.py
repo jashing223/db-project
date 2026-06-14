@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from dependencies import get_db
 from errors import conflict, not_found, raise_http_from_db_error
 from helpers import ALL_SLOTS, BUSY_SLOTS, fetch_appointment_by_id, fetch_appointments_filtered
+from permissions import READ_ALL, RECEPTION_MANAGER, require_roles
 from schemas.appointments import AppointmentCreate
 from serialize import serialize_row
 
@@ -50,7 +51,11 @@ def _flat_appointment(row: dict) -> dict:
 
 
 @router.post("/appointments", status_code=201)
-def create_appointment(body: AppointmentCreate, conn=Depends(get_db)) -> dict:
+def create_appointment(
+    body: AppointmentCreate,
+    _user=Depends(require_roles(*RECEPTION_MANAGER)),
+    conn=Depends(get_db),
+) -> dict:
     try:
         with conn.cursor() as cur:
             if not _is_slot_available(cur, body.Doc_Staff_ID, body.Scheduled_Time):
@@ -76,7 +81,10 @@ def create_appointment(body: AppointmentCreate, conn=Depends(get_db)) -> dict:
 
 
 @router.get("/appointments/today")
-def list_today_appointments(conn=Depends(get_db)) -> list[dict]:
+def list_today_appointments(
+    _user=Depends(require_roles(*READ_ALL)),
+    conn=Depends(get_db),
+) -> list[dict]:
     try:
         with conn.cursor() as cur:
             return fetch_appointments_filtered(
@@ -90,7 +98,12 @@ def list_today_appointments(conn=Depends(get_db)) -> list[dict]:
 
 
 @router.get("/appointments")
-def list_appointments(doctor_id: int, date: str, conn=Depends(get_db)) -> list[dict]:
+def list_appointments(
+    doctor_id: int,
+    date: str,
+    _user=Depends(require_roles(*READ_ALL)),
+    conn=Depends(get_db),
+) -> list[dict]:
     try:
         with conn.cursor() as cur:
             return fetch_appointments_filtered(
@@ -104,7 +117,11 @@ def list_appointments(doctor_id: int, date: str, conn=Depends(get_db)) -> list[d
 
 
 @router.patch("/appointments/{appointment_id}/cancel")
-def cancel_appointment(appointment_id: int, conn=Depends(get_db)) -> dict:
+def cancel_appointment(
+    appointment_id: int,
+    _user=Depends(require_roles(*RECEPTION_MANAGER)),
+    conn=Depends(get_db),
+) -> dict:
     try:
         with conn.cursor() as cur:
             cur.execute(

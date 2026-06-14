@@ -4,13 +4,17 @@ from fastapi import APIRouter, Depends
 
 from dependencies import get_db
 from errors import raise_http_from_db_error
+from permissions import READ_ALL, require_roles
 from serialize import serialize_rows
 
 router = APIRouter(tags=["doctors"])
 
 
 @router.get("/doctors")
-def list_doctors(conn=Depends(get_db)) -> list[dict]:
+def list_doctors(
+    _user=Depends(require_roles(*READ_ALL)),
+    conn=Depends(get_db),
+) -> list[dict]:
     try:
         with conn.cursor() as cur:
             cur.execute(

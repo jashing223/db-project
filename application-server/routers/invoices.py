@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from dependencies import get_db
 from errors import not_found, raise_http_from_db_error
 from helpers import fetch_pet_owner_for_appointment
+from permissions import READ_ALL, RECEPTION_MANAGER, require_roles
 from schemas.invoices import InvoicePay
 from serialize import serialize_row, serialize_rows
 
@@ -47,7 +48,10 @@ def _fetch_pending_record(cur, record_id: int) -> dict | None:
 
 
 @router.get("/invoices/pending")
-def list_pending_invoices(conn=Depends(get_db)) -> list[dict]:
+def list_pending_invoices(
+    _user=Depends(require_roles(*READ_ALL)),
+    conn=Depends(get_db),
+) -> list[dict]:
     try:
         with conn.cursor() as cur:
             cur.execute(
@@ -91,7 +95,12 @@ def list_pending_invoices(conn=Depends(get_db)) -> list[dict]:
 
 
 @router.patch("/invoices/{invoice_id}/pay")
-def pay_invoice(invoice_id: int, body: InvoicePay, conn=Depends(get_db)) -> dict:
+def pay_invoice(
+    invoice_id: int,
+    body: InvoicePay,
+    _user=Depends(require_roles(*RECEPTION_MANAGER)),
+    conn=Depends(get_db),
+) -> dict:
     try:
         with conn.cursor() as cur:
             cur.execute(

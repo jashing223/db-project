@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from dependencies import get_db
 from errors import not_found, raise_http_from_db_error
+from permissions import MANAGER_ONLY, READ_ALL, require_roles
 from schemas.catalog import CatalogPatch
 from serialize import serialize_row, serialize_rows
 
@@ -11,7 +12,10 @@ router = APIRouter(tags=["catalog"])
 
 
 @router.get("/catalog")
-def list_active_catalog(conn=Depends(get_db)) -> list[dict]:
+def list_active_catalog(
+    _user=Depends(require_roles(*READ_ALL)),
+    conn=Depends(get_db),
+) -> list[dict]:
     try:
         with conn.cursor() as cur:
             cur.execute(
@@ -28,7 +32,10 @@ def list_active_catalog(conn=Depends(get_db)) -> list[dict]:
 
 
 @router.get("/catalog/all")
-def list_all_catalog(conn=Depends(get_db)) -> list[dict]:
+def list_all_catalog(
+    _user=Depends(require_roles(*MANAGER_ONLY)),
+    conn=Depends(get_db),
+) -> list[dict]:
     try:
         with conn.cursor() as cur:
             cur.execute("SELECT * FROM Catalog_Items ORDER BY Item_ID")
@@ -39,7 +46,12 @@ def list_all_catalog(conn=Depends(get_db)) -> list[dict]:
 
 
 @router.patch("/catalog/{item_id}")
-def patch_catalog(item_id: int, body: CatalogPatch, conn=Depends(get_db)) -> dict:
+def patch_catalog(
+    item_id: int,
+    body: CatalogPatch,
+    _user=Depends(require_roles(*MANAGER_ONLY)),
+    conn=Depends(get_db),
+) -> dict:
     try:
         with conn.cursor() as cur:
             cur.execute("SELECT Item_ID FROM Catalog_Items WHERE Item_ID = %s", (item_id,))

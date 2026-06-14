@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from dependencies import get_db
 from errors import not_found, raise_http_from_db_error
+from permissions import READ_ALL, RECEPTION_MANAGER, require_roles
 from schemas.pets import PetCreate, PetUpdate
 from serialize import serialize_row, serialize_rows
 
@@ -16,7 +17,11 @@ _PET_COLUMNS = """
 
 
 @router.get("/pets")
-def list_pets(owner_id: int, conn=Depends(get_db)) -> list[dict]:
+def list_pets(
+    owner_id: int,
+    _user=Depends(require_roles(*READ_ALL)),
+    conn=Depends(get_db),
+) -> list[dict]:
     try:
         with conn.cursor() as cur:
             cur.execute(
@@ -35,7 +40,11 @@ def list_pets(owner_id: int, conn=Depends(get_db)) -> list[dict]:
 
 
 @router.post("/pets", status_code=201)
-def create_pet(body: PetCreate, conn=Depends(get_db)) -> dict:
+def create_pet(
+    body: PetCreate,
+    _user=Depends(require_roles(*RECEPTION_MANAGER)),
+    conn=Depends(get_db),
+) -> dict:
     try:
         with conn.cursor() as cur:
             cur.execute(
@@ -67,7 +76,12 @@ def create_pet(body: PetCreate, conn=Depends(get_db)) -> dict:
 
 
 @router.patch("/pets/{pet_id}")
-def update_pet(pet_id: int, body: PetUpdate, conn=Depends(get_db)) -> dict:
+def update_pet(
+    pet_id: int,
+    body: PetUpdate,
+    _user=Depends(require_roles(*RECEPTION_MANAGER)),
+    conn=Depends(get_db),
+) -> dict:
     try:
         with conn.cursor() as cur:
             cur.execute("SELECT Pet_ID FROM PetBase WHERE Pet_ID = %s", (pet_id,))

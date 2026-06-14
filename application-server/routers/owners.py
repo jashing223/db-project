@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from dependencies import get_db
 from errors import not_found, raise_http_from_db_error
+from permissions import READ_ALL, RECEPTION_MANAGER, require_roles
 from schemas.owners import OwnerCreate, OwnerUpdate
 from serialize import serialize_row, serialize_rows
 
@@ -18,7 +19,10 @@ _PET_COLUMNS = """
 
 
 @router.get("/owners")
-def list_owners(conn=Depends(get_db)) -> list[dict]:
+def list_owners(
+    _user=Depends(require_roles(*READ_ALL)),
+    conn=Depends(get_db),
+) -> list[dict]:
     try:
         with conn.cursor() as cur:
             cur.execute(
@@ -50,7 +54,11 @@ def list_owners(conn=Depends(get_db)) -> list[dict]:
 
 
 @router.post("/owners", status_code=201)
-def create_owner(body: OwnerCreate, conn=Depends(get_db)) -> dict:
+def create_owner(
+    body: OwnerCreate,
+    _user=Depends(require_roles(*RECEPTION_MANAGER)),
+    conn=Depends(get_db),
+) -> dict:
     try:
         with conn.cursor() as cur:
             cur.execute(
@@ -70,7 +78,12 @@ def create_owner(body: OwnerCreate, conn=Depends(get_db)) -> dict:
 
 
 @router.patch("/owners/{owner_id}")
-def update_owner(owner_id: int, body: OwnerUpdate, conn=Depends(get_db)) -> dict:
+def update_owner(
+    owner_id: int,
+    body: OwnerUpdate,
+    _user=Depends(require_roles(*RECEPTION_MANAGER)),
+    conn=Depends(get_db),
+) -> dict:
     try:
         with conn.cursor() as cur:
             cur.execute("SELECT Owner_ID FROM Owners WHERE Owner_ID = %s", (owner_id,))
@@ -102,7 +115,11 @@ def update_owner(owner_id: int, body: OwnerUpdate, conn=Depends(get_db)) -> dict
 
 
 @router.patch("/owners/{owner_id}/anonymize")
-def anonymize_owner(owner_id: int, conn=Depends(get_db)) -> dict:
+def anonymize_owner(
+    owner_id: int,
+    _user=Depends(require_roles(*RECEPTION_MANAGER)),
+    conn=Depends(get_db),
+) -> dict:
     try:
         with conn.cursor() as cur:
             cur.execute("SELECT Owner_ID FROM Owners WHERE Owner_ID = %s", (owner_id,))
